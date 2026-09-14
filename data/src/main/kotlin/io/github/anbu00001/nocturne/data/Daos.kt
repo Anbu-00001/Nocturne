@@ -4,6 +4,7 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -25,6 +26,12 @@ interface RawEventDao {
 
     @Query("SELECT EXISTS(SELECT 1 FROM raw_events WHERE eventType = :type AND timestamp >= :sinceTs)")
     suspend fun anySince(type: Int, sinceTs: Long): Boolean
+
+    @Query("SELECT MIN(timestamp) FROM raw_events")
+    suspend fun firstTimestamp(): Long?
+
+    @Query("SELECT MAX(timestamp) FROM raw_events")
+    suspend fun lastTimestamp(): Long?
 
     @Query("SELECT COUNT(*) FROM raw_events")
     fun observeCount(): Flow<Long>
@@ -62,6 +69,15 @@ interface SessionDao {
     @Query("SELECT MAX(startTs) FROM sessions WHERE startTs < :beforeTs")
     suspend fun lastStartBefore(beforeTs: Long): Long?
 
+    @Query("SELECT utcOffsetMinutes FROM sessions WHERE startTs <= :ts ORDER BY startTs DESC LIMIT 1")
+    suspend fun offsetAtOrBefore(ts: Long): Int?
+
+    @Query("SELECT * FROM sessions WHERE startTs >= :fromTs ORDER BY startTs")
+    suspend fun startingFrom(fromTs: Long): List<SessionEntity>
+
+    @Query("SELECT DISTINCT nightDate FROM sessions ORDER BY nightDate")
+    suspend fun nightDates(): List<String>
+
     @Query("SELECT * FROM sessions WHERE nightDate = :nightDate ORDER BY startTs")
     fun observeNight(nightDate: String): Flow<List<SessionEntity>>
 
@@ -85,6 +101,26 @@ interface SessionDao {
     )
     suspend fun countStartingAtOrAfterLocal(fromMinuteOfDay: Int): Int
 
+    /**
+     * Tags one night's sessions against its evening window, half-open and possibly wrapping midnight (the
+     * same rule as EveningWindow.contains, on each session's own offset), and against its sleep onset.
+     */
+    @Query(
+        """UPDATE sessions SET
+             inEveningWindow = CASE WHEN :startMinute <= :endMinute
+                 THEN ((startTs + utcOffsetMinutes * 60000) % 86400000) / 60000 >= :startMinute
+                      AND ((startTs + utcOffsetMinutes * 60000) % 86400000) / 60000 < :endMinute
+                 ELSE ((startTs + utcOffsetMinutes * 60000) % 86400000) / 60000 >= :startMinute
+                      OR ((startTs + utcOffsetMinutes * 60000) % 86400000) / 60000 < :endMinute
+                 END,
+             sleepOnsetOffsetMin = CASE WHEN :onsetTs IS NULL THEN NULL ELSE (startTs - :onsetTs) / 60000 END
+           WHERE nightDate = :nightDate""",
+    )
+    suspend fun tagNight(nightDate: String, startMinute: Int, endMinute: Int, onsetTs: Long?)
+
+    @Query("SELECT COALESCE(SUM(endTs - startTs), 0) FROM sessions WHERE nightDate = :nightDate AND inEveningWindow")
+    suspend fun eveningScreenMs(nightDate: String): Long
+
     /** Every app in the foreground on a never-unlocked wake, attributed or not, for tuning the package lists. */
     @Query(
         """SELECT a.packageName AS packageName, COUNT(*) AS n FROM session_apps a
@@ -105,6 +141,45 @@ interface SessionDao {
 
     @Query("SELECT COUNT(*) FROM sessions")
     suspend fun count(): Long
+}
+
+@Dao
+interface SleepDao {
+    @Upsert
+    suspend fun upsertNights(nights: List<NightEntity>)
+
+    @Query("DELETE FROM nights WHERE dateOfNight >= :fromDate")
+    suspend fun deleteNightsFrom(fromDate: String)
+
+    @Query("SELECT * FROM nights ORDER BY dateOfNight")
+    suspend fun nights(): List<NightEntity>
+
+    @Query("SELECT * FROM nights WHERE dateOfNight = :date")
+    fun observeNight(date: String): Flow<NightEntity?>
+
+    @Query("SELECT * FROM nights ORDER BY dateOfNight")
+    fun observeNights(): Flow<List<NightEntity>>
+
+    @Upsert
+    suspend fun upsertReport(report: SleepReportEntity)
+
+    @Query("DELETE FROM sleep_reports WHERE dateOfNight = :date")
+    suspend fun deleteReport(date: String)
+
+    @Query("SELECT * FROM sleep_reports ORDER BY dateOfNight")
+    suspend fun reports(): List<SleepReportEntity>
+
+    @Query("SELECT * FROM sleep_reports WHERE dateOfNight = :date")
+    fun observeReport(date: String): Flow<SleepReportEntity?>
+
+    @Query("SELECT COUNT(*) FROM sleep_reports")
+    fun observeReportCount(): Flow<Int>
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertPowerSample(sample: PowerSampleEntity)
+
+    @Query("SELECT * FROM power_samples WHERE timestamp >= :fromTs ORDER BY timestamp")
+    suspend fun powerSamplesFrom(fromTs: Long): List<PowerSampleEntity>
 }
 
 @Dao

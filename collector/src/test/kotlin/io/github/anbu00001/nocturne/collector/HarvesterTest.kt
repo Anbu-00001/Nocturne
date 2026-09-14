@@ -7,10 +7,11 @@ import io.github.anbu00001.nocturne.core.event.EventType
 import io.github.anbu00001.nocturne.core.event.UsageEvent
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
 import io.github.anbu00001.nocturne.core.glance.SessionKind
-import io.github.anbu00001.nocturne.core.time.EveningWindow
+import io.github.anbu00001.nocturne.core.sleep.SleepConfig
+import io.github.anbu00001.nocturne.data.DerivedTables
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.NocturneDatabase
-import io.github.anbu00001.nocturne.data.SessionRecomputer
+import io.github.anbu00001.nocturne.data.PowerSampleEntity
 import io.github.anbu00001.nocturne.data.toEntity
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -38,8 +39,9 @@ class HarvesterTest {
         harvester = Harvester(
             db = db,
             source = source,
-            recomputer = SessionRecomputer(db),
+            derived = DerivedTables(db),
             configFor = { ClassifierConfig() },
+            power = { at -> PowerSampleEntity(at, charging = true, batteryPercent = 50) },
             now = { clock },
             currentZoneId = { ZONE },
         )
@@ -64,7 +66,7 @@ class HarvesterTest {
     }
 
     @Test
-    fun sessionsSplitAcrossHarvestsMatchAFullRecompute() = runTest {
+    fun sessionsAndNightsSplitAcrossHarvestsMatchAFullRecompute() = runTest {
         clock = at(200) // mid-way through the extended session
         harvester.harvest()
         assertEquals(listOf(SessionKind.GLANCE_NO_UNLOCK), db.sessions().all().map { it.kind })
@@ -73,14 +75,16 @@ class HarvesterTest {
         harvester.harvest()
         clock = at(2_000)
         harvester.harvest()
-        val incremental = db.sessions().all()
+        val sessions = db.sessions().all()
+        val nights = db.sleep().nights()
         assertEquals(
             listOf(SessionKind.GLANCE_NO_UNLOCK, SessionKind.EXTENDED, SessionKind.GLANCE_UNLOCKED),
-            incremental.map { it.kind },
+            sessions.map { it.kind },
         )
 
-        SessionRecomputer(db).recomputeAll(ClassifierConfig(), EveningWindow.PROVISIONAL, ZONE)
-        assertEquals(incremental, db.sessions().all())
+        DerivedTables(db).recomputeAll(ClassifierConfig(), SleepConfig(), ZONE)
+        assertEquals(sessions, db.sessions().all())
+        assertEquals(nights, db.sleep().nights())
     }
 
     @Test
@@ -101,6 +105,17 @@ class HarvesterTest {
         source.usageAccess = false
         assertEquals(HarvestOutcome.NO_ACCESS, harvester.harvest().outcome)
         assertNull(db.harvest().cursor())
+    }
+
+    @Test
+    fun everyRunRecordsTheChargingStateEvenWithoutUsageAccess() = runTest {
+        clock = at(2_000)
+        source.usageAccess = false
+        harvester.harvest()
+        clock = at(2_900)
+        source.usageAccess = true
+        harvester.harvest()
+        assertEquals(listOf(at(2_000), at(2_900)), db.sleep().powerSamplesFrom(0).map { it.timestamp })
     }
 
     @Test

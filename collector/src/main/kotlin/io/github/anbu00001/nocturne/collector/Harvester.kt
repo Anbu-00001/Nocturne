@@ -2,14 +2,14 @@ package io.github.anbu00001.nocturne.collector
 
 import io.github.anbu00001.nocturne.core.event.EventType
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
-import io.github.anbu00001.nocturne.core.time.EveningWindow
+import io.github.anbu00001.nocturne.core.sleep.SleepConfig
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.core.time.ZoneChange
 import io.github.anbu00001.nocturne.core.time.ZoneTimeline
+import io.github.anbu00001.nocturne.data.DerivedTables
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.HarvestRunEntity
 import io.github.anbu00001.nocturne.data.NocturneDatabase
-import io.github.anbu00001.nocturne.data.SessionRecomputer
 import io.github.anbu00001.nocturne.data.ZoneChangeEntity
 import io.github.anbu00001.nocturne.data.toEntity
 import kotlinx.coroutines.CancellationException
@@ -21,14 +21,16 @@ import java.time.ZoneId
  * Copies the OS usage-event log into raw_events before it rolls off (spec §4.1).
  *
  * Safe to run at any time, any number of times, from the worker and the UI at once: inserts are
- * idempotent, the cursor only moves after a complete run, and sessions are re-derived over the
- * whole queried window, so rows left behind by a run that died halfway still get classified.
+ * idempotent, the cursor only moves after a complete run, and sessions and nights are re-derived over
+ * the whole queried window, so rows left behind by a run that died halfway still get classified.
  */
 class Harvester(
     private val db: NocturneDatabase,
     private val source: UsageEventSource,
-    private val recomputer: SessionRecomputer,
+    private val derived: DerivedTables,
     private val configFor: suspend (keyguardEventsSeen: Boolean) -> ClassifierConfig,
+    private val sleepConfig: suspend () -> SleepConfig = { SleepConfig() },
+    private val power: PowerSource = PowerSource.NONE,
     private val now: () -> Long = System::currentTimeMillis,
     private val currentZoneId: () -> String = { ZoneId.systemDefault().id },
 ) {
@@ -39,6 +41,8 @@ class Harvester(
     suspend fun harvest(): Result = mutex.withLock {
         val startedAt = now()
         recordZone(startedAt, currentZoneId())
+        // Charging corroborates sleep (spec §6.3). One sample per run needs no permission and no live process.
+        power.sample(startedAt)?.let { db.sleep().insertPowerSample(it) }
         if (!source.hasUsageAccess()) return log(startedAt, Result(HarvestOutcome.NO_ACCESS))
         if (!source.isUserUnlocked()) return log(startedAt, Result(HarvestOutcome.USER_LOCKED))
 
@@ -60,8 +64,7 @@ class Harvester(
                 chunkFrom = chunkTo
             }
             val written = if (seen > 0) {
-                val keyguardSeen = db.rawEvents().anySince(EventType.KEYGUARD_HIDDEN, startedAt - KEYGUARD_LOOKBACK_MS)
-                recomputer.recomputeFrom(queryFrom, configFor(keyguardSeen), EveningWindow.PROVISIONAL, currentZoneId())
+                derived.recomputeFrom(queryFrom, configFor(keyguardEventsSeen()), sleepConfig(), currentZoneId())
             } else {
                 0
             }
@@ -73,10 +76,14 @@ class Harvester(
         }
     }
 
-    /** Rebuilds every session from raw_events (after a classifier change, say). Serialised with harvests. */
+    /** Rebuilds every session and night from raw_events (after a model change, say). Serialised with harvests. */
     suspend fun recomputeAll(): Int = mutex.withLock {
-        val keyguardSeen = db.rawEvents().anySince(EventType.KEYGUARD_HIDDEN, now() - KEYGUARD_LOOKBACK_MS)
-        recomputer.recomputeAll(configFor(keyguardSeen), EveningWindow.PROVISIONAL, currentZoneId())
+        derived.recomputeAll(configFor(keyguardEventsSeen()), sleepConfig(), currentZoneId())
+    }
+
+    /** After the user enters or removes sleep times. */
+    suspend fun recomputeNights(): Int = mutex.withLock {
+        derived.recomputeNights(sleepConfig())
     }
 
     /** Called with the exact time from ACTION_TIMEZONE_CHANGED; each harvest also checks, in case it was missed. */
@@ -86,6 +93,9 @@ class Harvester(
         // The first zone ever seen also covers the backfilled history before it.
         db.harvest().insertZone(ZoneChangeEntity(sinceTs = if (latest == null) 0 else at, zoneId = zoneId))
     }
+
+    private suspend fun keyguardEventsSeen() =
+        db.rawEvents().anySince(EventType.KEYGUARD_HIDDEN, now() - KEYGUARD_LOOKBACK_MS)
 
     private suspend fun log(
         startedAt: Long,

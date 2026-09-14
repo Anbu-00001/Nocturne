@@ -20,6 +20,11 @@ data class ClassifierConfig(
     val triggerWindowMs: Long = 2_000,
     /** How soon before the wake a notification must have fired to count as its cause. */
     val notificationWakeWindowMs: Long = 1_500,
+    /**
+     * ColorOS usually logs the waking notification after SCREEN_INTERACTIVE, not before (seen on the A18:
+     * of 232 wakes with a notification within 5 s, 134 logged it 0 to 1 s after), so this soon after also counts.
+     */
+    val notificationAfterWakeMs: Long = 1_000,
     val unlockEvidence: UnlockEvidence = UnlockEvidence.KEYGUARD_EVENTS,
     /** Seeing only these after unlocking means nothing was looked at (spec: launcher, systemui, clock). */
     val trivialPackages: Set<String> = DefaultPackages.TRIVIAL,
@@ -94,4 +99,4 @@ object DefaultPackages {
  * Bump whenever classification logic or defaults change. The app re-derives every stored session
  * when it sees a new value (spec §5: the whole history is re-scored when the model improves).
  */
-const val CLASSIFIER_VERSION = 2
+const val CLASSIFIER_VERSION = 3

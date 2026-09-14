@@ -6,19 +6,19 @@ import io.github.anbu00001.nocturne.core.event.UsageEvent
 import io.github.anbu00001.nocturne.core.glance.ClassifiedSession
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
 import io.github.anbu00001.nocturne.core.glance.SessionDeriver
-import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.core.time.ZoneChange
 import io.github.anbu00001.nocturne.core.time.ZoneTimeline
 
 /**
  * Rebuilds the derived sessions table from raw_events (spec §5). Incremental and full rebuilds
- * run the same code, so recomputeAll() is exact by construction.
+ * run the same code, so recomputeAll() is exact by construction. Evening-window and sleep-onset
+ * tags are left to NightRecomputer, which DerivedTables runs in the same transaction.
  */
 class SessionRecomputer(private val db: NocturneDatabase) {
 
-    suspend fun recomputeAll(config: ClassifierConfig, window: EveningWindow, fallbackZoneId: String): Int =
-        recomputeFrom(0, config, window, fallbackZoneId)
+    suspend fun recomputeAll(config: ClassifierConfig, fallbackZoneId: String): Int =
+        recomputeFrom(0, config, fallbackZoneId)
 
     /**
      * Re-derives every session that raw events at or after [changedFromTs] could have altered.
@@ -27,7 +27,6 @@ class SessionRecomputer(private val db: NocturneDatabase) {
     suspend fun recomputeFrom(
         changedFromTs: Long,
         config: ClassifierConfig,
-        window: EveningWindow,
         fallbackZoneId: String,
     ): Int = db.withTransaction {
         val sessions = db.sessions()
@@ -64,8 +63,7 @@ class SessionRecomputer(private val db: NocturneDatabase) {
             for (row in page) {
                 val closed = deriver.feed(row.toUsageEvent()) ?: continue
                 if (closed.startTs < restartTs) continue
-                val offset = zones.offsetMinutesAt(closed.startTs)
-                pendingSessions += closed.toEntity(offset, window)
+                pendingSessions += closed.toEntity(zones.offsetMinutesAt(closed.startTs))
                 closed.foregroundMs.mapTo(pendingApps) { (pkg, ms) -> SessionAppEntity(closed.startTs, pkg, ms) }
             }
             afterTs = page.last().timestamp
@@ -99,7 +97,7 @@ fun UsageEvent.toEntity(utcOffsetMinutes: Int) = RawEventEntity(
     className = className.orEmpty(),
 )
 
-internal fun ClassifiedSession.toEntity(utcOffsetMinutes: Int, window: EveningWindow) = SessionEntity(
+internal fun ClassifiedSession.toEntity(utcOffsetMinutes: Int) = SessionEntity(
     startTs = startTs,
     endTs = endTs,
     kind = kind,
@@ -111,6 +109,7 @@ internal fun ClassifiedSession.toEntity(utcOffsetMinutes: Int, window: EveningWi
     endInferred = endInferred,
     utcOffsetMinutes = utcOffsetMinutes,
     nightDate = LocalClock.nightOf(startTs, utcOffsetMinutes).toString(),
-    inEveningWindow = window.contains(startTs, utcOffsetMinutes),
+    inEveningWindow = false,
     sleepOnsetOffsetMin = null,
+    lastActivityTs = lastActivityTs,
 )

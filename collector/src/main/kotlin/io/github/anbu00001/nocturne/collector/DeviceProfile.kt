@@ -3,9 +3,11 @@ package io.github.anbu00001.nocturne.collector
 import android.content.Context
 import android.content.Intent
 import android.provider.AlarmClock
+import android.provider.Settings
 import android.telecom.TelecomManager
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
 import io.github.anbu00001.nocturne.core.glance.UnlockEvidence
+import io.github.anbu00001.nocturne.core.sleep.SleepConfig
 
 /** Adds this phone's actual home app, clock and dialer to the classifier's default package sets. */
 class DeviceProfile(private val context: Context) {
@@ -22,6 +24,17 @@ class DeviceProfile(private val context: Context) {
             alarmPackages = base.alarmPackages + clocks,
             callPackages = base.callPackages + dialer,
             overLockscreenPackages = base.overLockscreenPackages + clocks + dialer,
+        )
+    }
+
+    /**
+     * The screen-off timeout decides how long a screen stays lit after the last touch (30 min on the A18),
+     * which sleep onset has to see past. Only the current value is readable, so it applies to all history.
+     */
+    fun sleepConfig(): SleepConfig {
+        val default = SleepConfig()
+        return default.copy(
+            screenOffTimeoutMs = Settings.System.getLong(context.contentResolver, Settings.System.SCREEN_OFF_TIMEOUT, default.screenOffTimeoutMs),
         )
     }
 

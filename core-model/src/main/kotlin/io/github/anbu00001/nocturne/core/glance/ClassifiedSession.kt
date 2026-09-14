@@ -43,6 +43,11 @@ data class ClassifiedSession(
     val foregroundMs: Map<String, Long>,
     /** True when SCREEN_NON_INTERACTIVE was never logged and the end had to be estimated. */
     val endInferred: Boolean,
+    /**
+     * Last event showing use (an unlock, an app switch, an interaction), or [startTs] if none. With a long
+     * screen-off timeout the screen can stay lit well past it, which sleep inference needs to know.
+     */
+    val lastActivityTs: Long = startTs,
 ) {
     val durationMs: Long get() = endTs - startTs
 

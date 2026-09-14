@@ -35,9 +35,11 @@ import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.collector.HarvestScheduler
 import io.github.anbu00001.nocturne.core.event.EventType
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
+import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.HarvestRunEntity
+import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.PackageCount
 import io.github.anbu00001.nocturne.data.writeCsv
 import io.github.anbu00001.nocturne.tone.Tone
@@ -66,6 +68,12 @@ data class Diagnostics(
     val lockedWakePackages: List<PackageCount> = emptyList(),
 )
 
+data class SleepSettings(
+    /** The most recent night with a personalised window, else the most recent night. */
+    val latest: NightEntity? = null,
+    val reports: Int = 0,
+)
+
 class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
 
     val health: StateFlow<Health> = combine(
@@ -77,6 +85,13 @@ class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
     ) { run, success, raw, sessions, work ->
         Health(run, success, raw, sessions, work.firstOrNull())
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), Health())
+
+    val sleep: StateFlow<SleepSettings> = combine(
+        app.database.sleep().observeNights(),
+        app.database.sleep().observeReportCount(),
+    ) { nights, reports ->
+        SleepSettings(nights.lastOrNull { it.windowPersonalised } ?: nights.lastOrNull(), reports)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SleepSettings())
 
     private val _diagnostics = MutableStateFlow(Diagnostics())
     val diagnostics = _diagnostics.asStateFlow()
@@ -128,9 +143,11 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
     val context = LocalContext.current
     val vm = viewModel { SettingsViewModel(app) }
     val health by vm.health.collectAsStateWithLifecycle()
+    val sleep by vm.sleep.collectAsStateWithLifecycle()
     val diagnostics by vm.diagnostics.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     var confirmWipe by remember { mutableStateOf(false) }
+    val screenTimeoutMs = remember { app.deviceProfile.sleepConfig().screenOffTimeoutMs }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) vm.export(uri)
     }
@@ -172,6 +189,22 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
         }
         Text(Tone.Settings.counts(health.rawEvents, health.sessions), color = muted)
         Button(onClick = vm::harvestNow) { Text(Tone.Settings.HARVEST_NOW) }
+
+        HorizontalDivider()
+        SectionTitle(Tone.Settings.SLEEP)
+        val latest = sleep.latest
+        if (latest != null && latest.windowPersonalised) {
+            val onsetMinute = Math.floorMod(latest.eveningWindowStartMinute + EveningWindow.LEAD_MINUTES, LocalClock.MINUTES_PER_DAY)
+            Text(Tone.Settings.habitual(minuteText(onsetMinute), minuteText(latest.eveningWindowEndMinute), latest.windowNights))
+            Text(
+                Tone.Settings.eveningWindow(windowText(EveningWindow(latest.eveningWindowStartMinute, latest.eveningWindowEndMinute))),
+                color = muted,
+            )
+        } else {
+            Text(Tone.Settings.HABITUAL_PENDING, color = muted)
+        }
+        Text(Tone.Settings.screenTimeout(Tone.duration(screenTimeoutMs)), color = muted)
+        Text(Tone.Settings.reports(sleep.reports), color = muted)
 
         HorizontalDivider()
         SectionTitle(Tone.Settings.CLASSIFIER)

@@ -17,7 +17,7 @@ class SessionDeriver(private val config: ClassifierConfig = ClassifierConfig()) 
 
     private var keyguard = KeyguardState.UNKNOWN
     private var open: OpenSession? = null
-    private var lastNotificationTs: Long? = null
+    private var lastNotification: UsageEvent? = null
     private var lastOffScreenResume: UsageEvent? = null
 
     /** Start of the session still in progress when the stream ran out, or null. */
@@ -28,7 +28,8 @@ class SessionDeriver(private val config: ClassifierConfig = ClassifierConfig()) 
         val session = open
         when (event.type) {
             EventType.SCREEN_INTERACTIVE -> {
-                open = OpenSession(event.timestamp, keyguard, lastNotificationTs, lastOffScreenResume)
+                val notificationBefore = lastNotification?.takeIf { event.timestamp - it.timestamp in 0..config.notificationWakeWindowMs }
+                open = OpenSession(event.timestamp, keyguard, notificationBefore, lastOffScreenResume)
                 lastOffScreenResume = null
                 // A second wake with no sleep in between: SCREEN_NON_INTERACTIVE was lost.
                 return session?.let { classify(it, it.lastSeenTs, endInferred = true) }
@@ -50,7 +51,10 @@ class SessionDeriver(private val config: ClassifierConfig = ClassifierConfig()) 
                 keyguard = KeyguardState.HIDDEN
                 session?.onKeyguard(event)
             }
-            EventType.NOTIFICATION_INTERRUPTION -> lastNotificationTs = event.timestamp
+            EventType.NOTIFICATION_INTERRUPTION -> {
+                lastNotification = event
+                session?.onNotification(event, config.notificationAfterWakeMs)
+            }
             EventType.ACTIVITY_RESUMED ->
                 if (session != null) session.onResumed(event) else lastOffScreenResume = event
             EventType.ACTIVITY_PAUSED, EventType.ACTIVITY_STOPPED ->
@@ -92,6 +96,7 @@ class SessionDeriver(private val config: ClassifierConfig = ClassifierConfig()) 
             appCount = realApps.size,
             foregroundMs = foreground,
             endInferred = endInferred,
+            lastActivityTs = minOf(s.lastSeenTs, endTs),
         )
     }
 
@@ -109,12 +114,14 @@ class SessionDeriver(private val config: ClassifierConfig = ClassifierConfig()) 
         // ColorOS logs the last-used app's resume just before KEYGUARD_HIDDEN on a fingerprint wake
         // (seen on a real device), so a clock that returns right before an unlock is not an alarm ringing.
         fun stayedLocked(e: UsageEvent) = s.hiddenTs.let { it == null || it - e.timestamp > window }
-        val notification = s.notificationTs
+        val notification = s.wakeNotification
         return when {
             early.any(::isCallScreen) -> WakeTrigger.CALL
             early.any { it.packageName in config.alarmPackages && stayedLocked(it) } -> WakeTrigger.ALARM
-            notification != null && s.startTs - notification in 0..config.notificationWakeWindowMs ->
-                WakeTrigger.NOTIFICATION
+            // ColorOS's clock posts an "upcoming alarm" notification that lights the screen for 10 s,
+            // 15 min before each alarm (seen on the A18). The clock woke the phone, not the user.
+            notification != null && notification.packageName in config.alarmPackages -> WakeTrigger.ALARM
+            notification != null -> WakeTrigger.NOTIFICATION
             else -> WakeTrigger.UNKNOWN
         }
     }
@@ -151,9 +158,12 @@ internal enum class KeyguardState { UNKNOWN, SHOWING, HIDDEN }
 private class OpenSession(
     val startTs: Long,
     private val keyguardAtStart: KeyguardState,
-    val notificationTs: Long?,
+    notificationBefore: UsageEvent?,
     val offScreenResume: UsageEvent?,
 ) {
+    /** The notification that most likely lit the screen, logged just before or just after the wake. */
+    var wakeNotification: UsageEvent? = notificationBefore
+        private set
     var lastSeenTs = startTs
         private set
     var hiddenTs: Long? = null
@@ -177,6 +187,10 @@ private class OpenSession(
 
     fun touch(ts: Long) {
         lastSeenTs = maxOf(lastSeenTs, ts)
+    }
+
+    fun onNotification(e: UsageEvent, afterWakeMs: Long) {
+        if (wakeNotification == null && e.timestamp - startTs in 0..afterWakeMs) wakeNotification = e
     }
 
     fun onKeyguard(e: UsageEvent) {
