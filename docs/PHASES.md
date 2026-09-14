@@ -13,7 +13,7 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 | 2a | Light dose (§6.1), Giménez suppression (§6.2), sleep inference (§6.3) in `:core-model` | no | done, replayed on 10 real nights |
 | 2a+ | Sleep in the existing app: schema 2, nights table, personalised evening window, "I slept about X to Y" entry, sleep chart. No foreground service. | 📱 verify | installed on the A18 2026-09-15 |
 | 2b | Light sampler service (`specialUse`), Tonight screen, light samples feeding §6.1/§6.2 | 📱 | after 1e passes |
-| 2c | Sleep inference against 14 hand-labelled nights, ≥80% of onsets within 30 min | 📱 | needs your corrected times |
+| 2c | Sleep inference against 14 hand-labelled nights, ≥80% of onsets within 30 min | 📱 | 5 of 14 nights labelled, all 5 within 30 min |
 | 3a | μEMA reflection cards, focus timer with interruption count | 📱 | |
 | 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | |
 | 3c | Personal sensitivity fit, n ≥ 30 nights | 📱 | |
@@ -49,8 +49,9 @@ Developer tools that read personal data. Keep every export and database copy out
 - Before installing, schema 2 migrated a fresh copy of the phone database in `LiveDatabaseTest`: 18,766 raw events before and after, 933 sessions, every night recomputed. A backup of that copy was kept off the repository.
 - On the phone after `adb install -r`: schema 2, 18,769 raw events, all 933 sessions re-derived with classifier 3, nights written, model version `3.1` recorded, no crash.
 - Classifier 3 on the real history: 37 alarm wakes (was 18) now that the clock's upcoming-alarm notices count as alarms; 319 counted glances.
-- You confirmed the estimate for the night of Sun 13 Sept (asleep 04:09 to 13:00): the first labelled night toward 2c.
-- Sleep estimates for the 9 complete nights match the laptop replay exactly. Only 5 reach confidence 0.4, so the evening window stays provisional until more nights, or your entered times, reach 7.
+- You confirmed the estimates for five nights, Wed 9 to Sun 13 Sept (01:59 to 10:48, 03:09 to 12:23, 03:58 to 13:00, 03:10 to 12:36, 04:09 to 13:00). Replayed against them, onset and wake are within 30 min on 5 of 5 (all exact), plain and leave-one-out. The late wakes are your real times, not a model bias.
+- Sleep estimates for the 9 complete nights match the laptop replay exactly. Only 5 reach confidence 0.4, so the evening window stays provisional until 7 nights count. Two confirmed nights sit below 0.4: Wed 9 (0.38, a rival onset at 00:42) and Fri 11 (0.01, a near tie between waking at 13:00 and 14:02). Entering those two as your times makes 7, and the window becomes personal.
+- Confidence under-rates those two correct nights, but with no wrong night yet there is nothing to calibrate it against, so it is unchanged.
 
 ## Phone checks for 1d and 1e
 
