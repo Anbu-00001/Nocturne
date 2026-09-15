@@ -4,10 +4,17 @@ import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import io.github.anbu00001.nocturne.core.circadian.Forger99
+import io.github.anbu00001.nocturne.core.circadian.Hannay19
+import io.github.anbu00001.nocturne.core.circadian.LightScenario
+import io.github.anbu00001.nocturne.core.circadian.PhaseEstimator
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
+import io.github.anbu00001.nocturne.core.light.LightReading
 import io.github.anbu00001.nocturne.core.metrics.ActivityDay
 import io.github.anbu00001.nocturne.core.sleep.SleepConfig
 import io.github.anbu00001.nocturne.core.time.LocalClock
+import io.github.anbu00001.nocturne.core.time.ZoneChange
+import io.github.anbu00001.nocturne.core.time.ZoneTimeline
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -17,14 +24,17 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneOffset
 
 /**
  * Developer check before installing a schema change: migrates a copy of the database pulled from the
  * phone (`adb exec-out run-as io.github.anbu00001.nocturne cat databases/nocturne.db`, plus -wal and -shm)
  * and recomputes everything on it. Skipped unless NOCTURNE_LIVE_DB names that copy. Writes a summary to
- * build/live-database.txt, and the screen-use minutes of the latest 7-night window to build/live-activity-minutes.txt
- * for the nparACT cross-check (tools/actigraphy). Both are personal data: keep them out of the repository.
+ * build/live-database.txt, including modelled DLMO by night, and the screen-use minutes of the latest 7-night window to
+ * build/live-activity-minutes.txt for the nparACT cross-check (tools/actigraphy). Both are personal data: keep them out of
+ * the repository.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
@@ -87,12 +97,37 @@ class LiveDatabaseTest {
                         appendLine("  $end  ${v("IS")}  ${v("IS_SLEEP")}  ${v("IV")}  ${v("IV_SLEEP")}  $l5  ${v("L5_ASLEEP")}")
                     }
                     appendLine("model runs: ${room.metrics().latestRun()}")
+                    appendLine()
+                    appendPhases(room, nights)
                 },
             )
             lastJudged?.let { writeActivityMinutes(room, it) }
             assertTrue(nights.any { it.estimatedSleepOnset != null })
         } finally {
             room.close()
+        }
+    }
+
+    /** Spec §6.4 on the phone's history: DLMO by night under each light scenario, set against habitual sleep. */
+    private suspend fun StringBuilder.appendPhases(room: NocturneDatabase, nights: List<NightEntity>) {
+        val raw = room.rawEvents()
+        val from = raw.firstTimestamp() ?: return
+        val to = maxOf(raw.lastTimestamp() ?: return, room.harvest().cursor() ?: Long.MIN_VALUE)
+        val zones = ZoneTimeline(room.harvest().zones().map { ZoneChange(it.sinceTs, it.zoneId) }.ifEmpty { listOf(ZoneChange(0, "Asia/Kolkata")) })
+        val sleep = nights.mapNotNull { n ->
+            val onset = n.estimatedSleepOnset
+            val wake = n.estimatedWakeTime
+            if (onset != null && wake != null && wake > onset) onset until wake else null
+        }
+        val readings = room.light().overlapping(0, to).map { LightReading(it.timestamp, it.durationMs, it.ambientLux?.toDouble(), it.brightnessSetting, it.darkUi, it.warmFilter) }
+        fun clock(ts: Long) = Instant.ofEpochMilli(ts).atOffset(ZoneOffset.ofTotalSeconds(zones.offsetMinutesAt(ts) * 60)).toLocalTime().toString().take(5)
+        appendLine("modelled DLMO by night under each light scenario, hours before habitual onset in brackets; plausible within -1 to 7 h; ${readings.size} light samples:")
+        for ((name, model) in listOf("Hannay19" to Hannay19(), "Forger99" to Forger99())) {
+            for (p in PhaseEstimator.estimate(from, to, zones, sleep, readings, model)) {
+                val scenarios = LightScenario.entries.joinToString { s -> p.dlmoByScenario[s]?.let { "$s ${clock(it)} (%+.1f h)".format(p.phaseAngleHours(s)) } ?: "$s -" }
+                val range = p.earliestTs?.let { "${clock(it)} to ${clock(p.latestTs!!)}" } ?: "none"
+                appendLine("  $name ${p.date}: habitual onset ${clock(p.habitualOnsetTs)}; $scenarios; plausible $range; settled ${p.settled}${p.dlmoTs?.let { ", DLMO ${clock(it)}" } ?: ""}")
+            }
         }
     }
 
