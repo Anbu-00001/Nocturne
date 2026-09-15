@@ -1,17 +1,22 @@
 package io.github.anbu00001.nocturne.data
 
 import androidx.room.withTransaction
+import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
 import io.github.anbu00001.nocturne.core.light.DisplayProfile
 import io.github.anbu00001.nocturne.core.light.EveningLight
 import io.github.anbu00001.nocturne.core.light.EveningLightEstimate
+import io.github.anbu00001.nocturne.core.light.LightAssumptions
 import io.github.anbu00001.nocturne.core.light.LightReading
 import io.github.anbu00001.nocturne.core.light.ScreenSpan
 import io.github.anbu00001.nocturne.core.light.UnmeasuredLight
+import io.github.anbu00001.nocturne.core.metrics.FreeNights
+import io.github.anbu00001.nocturne.core.metrics.METRICS_VERSION
 import io.github.anbu00001.nocturne.core.sleep.HabitualWindow
 import io.github.anbu00001.nocturne.core.sleep.NightSession
 import io.github.anbu00001.nocturne.core.sleep.NightSleep
 import io.github.anbu00001.nocturne.core.sleep.OffsetSession
+import io.github.anbu00001.nocturne.core.sleep.SLEEP_MODEL_VERSION
 import io.github.anbu00001.nocturne.core.sleep.SleepConfig
 import io.github.anbu00001.nocturne.core.sleep.SleepEstimate
 import io.github.anbu00001.nocturne.core.sleep.SleepNights
@@ -21,28 +26,55 @@ import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import java.time.LocalDate
 
-/** Sessions and nights are rebuilt together in one transaction, so no reader sees one without the other. */
-class DerivedTables(private val db: NocturneDatabase, display: DisplayProfile = DisplayProfile.GENERIC) {
+/**
+ * Sessions, nights and regularity windows are rebuilt together in one transaction, so no reader sees one without the
+ * others, and every row written carries the model run in force (analytics §6.2).
+ */
+class DerivedTables(
+    private val db: NocturneDatabase,
+    private val display: DisplayProfile = DisplayProfile.GENERIC,
+    private val freeNights: FreeNights = FreeNights(),
+    now: () -> Long = System::currentTimeMillis,
+) {
     private val sessions = SessionRecomputer(db)
     private val nights = NightRecomputer(db, display)
+    private val windows = WindowMetricsRecomputer(db, freeNights)
+    private val runs = ModelRuns(db, now)
 
     /** Returns the number of sessions written. */
     suspend fun recomputeFrom(changedFromTs: Long, classifier: ClassifierConfig, sleep: SleepConfig, fallbackZoneId: String): Int =
         db.withTransaction {
+            val run = run(sleep)
             val written = sessions.recomputeFrom(changedFromTs, classifier, fallbackZoneId)
-            nights.recomputeFrom(changedFromTs, sleep)
+            windows.recompute(nights.recompute(changedFromTs, sleep, run).from, run)
             written
         }
 
     suspend fun recomputeAll(classifier: ClassifierConfig, sleep: SleepConfig, fallbackZoneId: String): Int =
         db.withTransaction {
+            val run = run(sleep)
             val written = sessions.recomputeAll(classifier, fallbackZoneId)
-            nights.recomputeAll(sleep)
+            nights.recompute(null, sleep, run)
+            windows.recompute(null, run)
             written
         }
 
     /** After the user enters or removes sleep times, which can move every night through corrective offsets. */
-    suspend fun recomputeNights(sleep: SleepConfig): Int = nights.recomputeAll(sleep)
+    suspend fun recomputeNights(sleep: SleepConfig): Int = db.withTransaction {
+        val run = run(sleep)
+        val pass = nights.recompute(null, sleep, run)
+        windows.recompute(null, run)
+        pass.written
+    }
+
+    /**
+     * The run for the configuration in force. The classifier's package lists are left out: they follow apps the phone
+     * resolves, and a new launcher is not a new model.
+     */
+    private suspend fun run(sleep: SleepConfig): Long = runs.current(
+        modelVersion = "$CLASSIFIER_VERSION.$SLEEP_MODEL_VERSION.$METRICS_VERSION",
+        configText = "sleep=$sleep\ndisplay=$display\nlight=${LightAssumptions()}\nfreeNights=$freeNights",
+    )
 }
 
 /**
@@ -52,12 +84,15 @@ class DerivedTables(private val db: NocturneDatabase, display: DisplayProfile = 
  */
 class NightRecomputer(private val db: NocturneDatabase, private val display: DisplayProfile = DisplayProfile.GENERIC) {
 
-    suspend fun recomputeAll(config: SleepConfig): Int = recompute(null, config)
+    /** Nights written, and the first night re-derived (null when every night was). */
+    internal data class Pass(val written: Int, val from: LocalDate?)
+
+    suspend fun recomputeAll(config: SleepConfig): Int = recompute(null, config, runId = 0).written
 
     /** Re-derives every night that sessions at or after [changedFromTs] could have altered. Returns nights written. */
-    suspend fun recomputeFrom(changedFromTs: Long, config: SleepConfig): Int = recompute(changedFromTs, config)
+    suspend fun recomputeFrom(changedFromTs: Long, config: SleepConfig): Int = recompute(changedFromTs, config, runId = 0).written
 
-    private suspend fun recompute(changedFromTs: Long?, config: SleepConfig): Int = db.withTransaction {
+    internal suspend fun recompute(changedFromTs: Long?, config: SleepConfig, runId: Long): Pass = db.withTransaction {
         val sessions = db.sessions()
         val sleep = db.sleep()
         val raw = db.rawEvents()
@@ -107,12 +142,12 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
             val light = lightFor(date, offset, window.window, night?.onsetTs, nightSessions, lightDataToTs)
             rows += when {
                 night != null -> night.toEntity(eveningMinutes)
-                else -> NightEntity(key, null, null, 0f, SleepSource.INFERRED, eveningMinutes, 0, null, null, null, null, null)
-            }.withWindow(window).withLight(light)
+                else -> NightEntity(key, null, null, 0f, SleepSource.INFERRED, eveningMinutes, 0, null, null, null, null, null, utcOffsetMinutes = offset)
+            }.withWindow(window).withLight(light).copy(modelRunId = runId)
         }
         sleep.deleteNightsFrom(from?.toString() ?: "")
         sleep.upsertNights(rows)
-        rows.size
+        Pass(rows.size, from)
     }
 
     /**

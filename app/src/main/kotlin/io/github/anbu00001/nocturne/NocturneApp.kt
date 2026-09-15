@@ -8,6 +8,7 @@ import io.github.anbu00001.nocturne.collector.DeviceProfile
 import io.github.anbu00001.nocturne.collector.HarvestScheduler
 import io.github.anbu00001.nocturne.collector.Harvester
 import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
+import io.github.anbu00001.nocturne.core.metrics.METRICS_VERSION
 import io.github.anbu00001.nocturne.core.sleep.SLEEP_MODEL_VERSION
 import io.github.anbu00001.nocturne.data.DerivedTables
 import io.github.anbu00001.nocturne.data.NocturneDatabase
@@ -45,10 +46,13 @@ class NocturneApp : Application(), CollectorHost {
         rescoreIfModelChanged()
     }
 
-    /** Spec §5: when the classifier or sleep model improves, the whole history is re-scored from raw_events. */
+    /**
+     * Spec §5: when the classifier, sleep model or regularity metrics improve, the whole history is re-scored from
+     * raw_events, and the rows it writes carry a new model run (analytics §6.2).
+     */
     private fun rescoreIfModelChanged() {
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
-        val version = "$CLASSIFIER_VERSION.$SLEEP_MODEL_VERSION"
+        val version = "$CLASSIFIER_VERSION.$SLEEP_MODEL_VERSION.$METRICS_VERSION"
         if (prefs.getString(KEY_MODEL_VERSION, null) == version) return
         appScope.launch {
             harvester.recomputeAll()

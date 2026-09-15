@@ -13,9 +13,10 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 | 2a | Light dose (§6.1), Giménez suppression (§6.2), sleep inference (§6.3) in `:core-model` | no | done, replayed on real nights |
 | 2a+ | Sleep in the existing app: schema 2, nights table, personalised evening window, "I slept about X to Y" entry, sleep chart. No foreground service. | 📱 verify | installed on the A18 2026-09-15 |
 | 2b | Light sampler service (`specialUse`), Tonight screen, light samples feeding §6.1/§6.2 | 📱 | installed 2026-09-15 07:11; light measurement on since 07:13; phone checks under way |
-| 2c | Sleep inference against 14 hand-labelled nights, ≥80% of onsets within 30 min | 📱 | 5 of 14 nights labelled, all 5 within 30 min; no-sleep nights can now be labelled |
+| 2c | Sleep inference against 14 hand-labelled nights, ≥80% of onsets within 30 min | 📱 | 5 confirmed nights, all exact; 14 Sept labelled from memory and marked uncertain |
+| 2.5 / 2.6 | Regularity metrics, schema 4 with `window_metrics` and `model_runs` (NOCTURNE_ANALYTICS.md) | 📱 verify | installed on the A18 2026-09-15 15:26 |
 | 3a | μEMA reflection cards, focus timer with interruption count | 📱 | ready to start (see Phase 3 readiness) |
-| 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | reference generator and pinned environment ready; real light from 21 Sept |
+| 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | reference generator and pinned environment ready; a week of real light by 22 Sept |
 | 3c | Personal sensitivity fit, n ≥ 30 nights | 📱 | falling-asleep times collected from 2026-09-15; needs 30 nights with light |
 | 4 | ActivityWatch exporter on Ubuntu | laptop + 📱 export | |
 
@@ -35,7 +36,7 @@ Developer tools that read personal data. Keep every export and database copy out
   Add `NOCTURNE_SLEEP_LABELS=labels.csv` (lines like `2026-09-06,00:10,08:30`, or `2026-09-14,none,none` for a night without sleep, local time) for the §10 hit rate, plain and leave-one-out.
 - Check a schema change against the phone's real database before installing:
   copy `databases/nocturne.db` (plus `-wal`, `-shm`) off the phone with `adb exec-out run-as io.github.anbu00001.nocturne cat …`,
-  then `NOCTURNE_LIVE_DB=nocturne.db ./gradlew :data:testDebugUnitTest --tests '*LiveDatabaseTest*'` and read `data/build/live-database.txt`.
+  then `NOCTURNE_LIVE_DB=nocturne.db ./gradlew :data:testDebugUnitTest --tests '*LiveDatabaseTest*'` and read `data/build/live-database.txt`, which also lists the regularity windows for the latest night.
 - Hannay19 reference trajectories (Phase 3b): `uv venv && uv pip install -r tools/circadian/requirements.txt`, then
   `python tools/circadian/hannay19_golden.py --light week.csv --out week-hannay19.csv` (or `--synthetic-days 7` before real light exists).
 
@@ -58,24 +59,30 @@ Developer tools that read personal data. Keep every export and database copy out
 
 ## Phase 2b build and install (2026-09-15)
 
-A running light service keeps Nocturne's process alive, which would hide exactly the ColorOS kills the 1e soak is testing for. So 2b is installed with light measurement off, and nothing starts the service until you turn it on.
+A running light service keeps Nocturne's process alive, which would hide exactly the ColorOS kills the 1e soak is testing for. So 2b was installed with light measurement off, and nothing starts the service until you turn it on.
 
 - Light measurement, once on, reads the light sensor only while the screen is on and writes one sample per 30 s window: time-weighted median lux, the brightness setting, dark mode and the warm filter. It is started by opening the app, by each harvester run, at boot and after an app update; a start Android refuses is shown in Settings.
 - Nights with light samples get a modelled suppression band from the evening window's start to sleep onset, with how many screen-on minutes a sample covered. Nights from before the service ran stay unmodelled rather than counted as dark.
 - Tonight tab: time to the evening window, light at the eyes now against the 10 lux line (the screen alone while room light is not measured), glances so far, suppression so far.
 - Schema 3 only adds columns. Its migration ran on a copy of the phone database pulled at 07:09 (19,157 raw events before and after, 960 sessions, every night recomputed), then on the phone: installed 07:11, schema 3, 19,157 raw events, model version `3.2`, no crash, no light samples and no service running. WorkManager rescheduled the harvester under a new job id straight after the update.
-- Soak so far: 31 harvest runs by 06:30 on 15 Sept, 30 of them OK, longest gap 5.4 h overnight while the phone was idle. The OS keeps 10 days of events, so a gap that size loses nothing.
-- Light measurement went on from the phone at 07:13:44 and you chose to keep it, restarting the soak. First phone checks: the service runs in the foreground (`specialUse`), `dumpsys sensorservice` lists it as a light client at 200 ms, samples arrive every 30 s with about 150 readings each, and after the 07:17 update it restarted by itself within seconds (MY_PACKAGE_REPLACED). Settings shows the sensor as stk33c01, steps of 1 lux up to 65,535 lux: anything under 1 lux reads 0, so dim evening light can only be bounded, not measured. Tonight with a room reading and the screen at minimum brightness showed about 0.03 lux at the eyes. "Warm display filter now: off" at 07:21 is right but does not yet prove the ColorOS keys are read; that needs a reading after 22:00.
+- Soak so far: 31 harvest runs by 06:30 on 15 Sept, 30 of them OK, longest gap 5.4 h overnight while the phone was idle. After the restart, 14 of 14 runs OK by 15:00, longest gap 4.3 h. The OS keeps 10 days of events, so gaps that size lose nothing.
+- Light measurement went on from the phone at 07:13:44 and you chose to keep it, restarting the soak. First phone checks: the service runs in the foreground (`specialUse`), `dumpsys sensorservice` lists it as a light client at 200 ms, samples arrive every 30 s with about 150 readings each, and after each update it restarted by itself within seconds (MY_PACKAGE_REPLACED). Settings shows the sensor as stk33c01, steps of 1 lux up to 65,535 lux: anything under 1 lux reads 0, so dim evening light can only be bounded, not measured. By 15:00, 180 samples, the brightest 49 lux. "Warm display filter now: off" at 07:21 is right but does not yet prove the ColorOS keys are read; that needs a reading after 22:00.
 
 ## No-sleep nights (2026-09-15)
 
-You did not sleep on the night of Sun 14 Sept. The app said "asleep about 21:30 to 00:31": the phone was quiet then because you were at the laptop, then in use all night. That is the false positive the spec warns about (§6.3), and it exposed two gaps:
+You did not sleep on the night of Sun 14 Sept, then slept in the morning. The app first said "asleep about 21:30 to 00:31": the phone was quiet then because you were at the laptop, then in use until 07:30. That is the false positive the spec warns about (§6.3), and it exposed two gaps:
 
 - **A quiet stretch looks the same to the phone whether you were asleep or awake elsewhere.** The likelihood cancels, so only priors can decide: sleep of that length starting then (your usual onset and duration) against an away stretch of that length at any hour, with a 3% prior that a night holds no sleep at all. Around your own onset and duration the priors are Student-t, so an unusual night is unlikely rather than impossible.
-- **The sleep after a night awake starts in the morning,** which the spec's 20:00 to 06:00 onset window cannot place. When the night itself looks sleepless, onsets up to noon are searched too. Only then: allowing late onsets on every night let a quiet afternoon beat a real short night in testing.
-- Without seven usable nights before it, the model has no personal prior, and on phone data alone 14 Sept stays "asleep 21:30 to 00:31", but its confidence fell from 0.45 to 0.38, below the 0.4 at which a night feeds priors and the window. Replay on the real history: the five confirmed nights are still 5 of 5 within 30 min, plain and leave-one-out.
-- In the app, "Correct these times" now offers "I did not sleep". A sleepless night has no times, shows as a ring on the Patterns chart, and never feeds priors, the window or corrective offsets.
+- **The sleep after a night awake starts in the morning,** which the spec's 20:00 to 06:00 onset window cannot place. Onsets up to noon are now weighed on every night, but only with a wake the phone saw: a morning onset "still asleep" at the edge of the history would let a quiet afternoon pass for sleep, which is what broke the first attempt. Ordinary nights are unchanged, because their own sleep is longer and better placed than any morning stretch.
+- On the real history 14 Sept now reads 07:30 to 11:51 (confidence 0.53), with the laptop evening as the runner-up, and the five confirmed nights stay exact. You remembered "probably 06:00 to 12:10, not sure". The phone shows unlocked use at 06:05 to 06:19 and 07:08 to 07:30, and quiet from 07:31 until a notification at 11:51, so the label is kept but marked uncertain and does not count toward 2c until you are sure. Scored against it, onset is 90 min late and wake 18 min early.
+- In the app, "Correct these times" offers "I did not sleep". A sleepless night has no times, shows as a ring on the Patterns chart, and never feeds priors, the window or corrective offsets.
 - The wake step also offers an optional falling-asleep band, the Pittsburgh Sleep Quality Index's item 2 bands (15 min or less, 16 to 30, 31 to 60, over 60), collected now because the Phase 3c sensitivity fit needs 30 nights of it.
+
+## Regularity on the A18 (2026-09-15)
+
+- Schema 4 only adds the `window_metrics` and `model_runs` tables and `nights.modelRunId`. On a phone copy pulled at 15:25: 19,843 raw events before and after, 983 sessions, every night and window recomputed. On the phone after the 15:26 install: schema 4, 19,843 raw events, model version `3.3.1`, one model run (FIRST, with the A18 display profile), 360 window rows, the light service restarted and the harvester rescheduled, no crash.
+- For the 7 nights ending Mon 14 Sept: Sleep Regularity Index 79; onset spread 2 h 2 min; social jetlag 55 min; composite phase deviation 1.6 h a night. From screen use: stability (IS) 0.27, fragmentation (IV) 0.81, relative amplitude 0.87, circadian function index 0.58; the quietest 5 hours start around 07:08 and the busiest 10 around 17:28. Over 14 nights (only 11 recorded): SRI 73, onset spread 2 h 13 min, phase deviation 2.7 h.
+- Patterns shows these under "Regularity" for the 7- and 28-night windows ending on the latest judged night, and says what a withheld figure is missing.
 
 ## Phase 3 readiness
 
@@ -83,7 +90,7 @@ What each step needs, and what is already in place.
 
 - **3a μEMA cards and focus timer.** Needs phone-down gaps (derivable from sessions today), the one-tap card, the caps (1 per 3 h, 4 a day, never in the evening window) and interruption counts from raw_events unlocks. The reflections and focus_blocks tables have existed since schema 1. Design risk: the spec forbids notifications, so a card can only appear when you open Nocturne; response rates depend on how often that is, and dismissals are recorded as signal.
 - **3b Hannay19 port.** `tools/circadian/hannay19_golden.py` runs Arcascope `circadian` 1.0.3 (pinned in `requirements.txt`) and writes every state at full precision; a synthetic week gives identical output on re-runs. What the port must copy exactly: fixed-step RK4 with light held over each step, the step from t[i-1] to t[i] using the light at t[i], photopic lux with alpha = 0.05·I^1.5/(I^1.5 + 9325), the default initial condition for 16L:8D at midnight, and DLMO = CBTmin − 7 h. Risks to resolve in 3b: the phone measures light only while the screen is on, so daylight is missing from a phone-only series (sleep can stand in as darkness, awake hours need a stated prior); the model takes photopic lux while §6.1 produces melanopic EDI, so the conversion is an explicit assumption; published accuracy is about ±1 h against lab DLMO.
-- **3c personal sensitivity fit.** Needs at least 30 nights with both modelled suppression (light on from 21 Sept) and your falling-asleep band (collected from 15 Sept). Earliest around late October if you answer most mornings.
+- **3c personal sensitivity fit.** Needs at least 30 nights with both modelled suppression (light on since 15 Sept) and your falling-asleep band (collected from 15 Sept). Earliest around mid-October if you answer most mornings.
 
 ## Analytics layer (NOCTURNE_ANALYTICS.md): how it fits
 
@@ -91,21 +98,24 @@ Where each part of the analytics spec lands among the phases above, and where th
 
 | Step | What | Needs | When |
 |---|---|---|---|
-| 2.5a | `SufficiencyGate` and the Sleep Regularity Index in `:core-model`, with tests | nothing | done 2026-09-15, awaiting review before anything else |
-| 2.5b | IS, IV, RA, L5/M10, CPD, social jetlag, onset SD over rolling 7/14/28-day windows; a Patterns "Regularity" section that says what is missing ("SRI needs 7 nights; you have 4") | 2.5a reviewed | next, alongside 2c labelling |
-| 2.6 | Schema 4: a derived `window_metrics` table and `model_runs`, every derived row carrying the run that wrote it | 2.5b | with 2.5b's first install |
+| 2.5a | `SufficiencyGate` and the Sleep Regularity Index in `:core-model`, with tests | nothing | done 2026-09-15 |
+| 2.5b | IS, IV, RA, L5/M10, CFI, CPD, social jetlag, onset SD over rolling 7/14/28-night windows; a Patterns "Regularity" section that says what is missing | 2.5a | done and installed 2026-09-15 |
+| 2.6 | Schema 4: a derived `window_metrics` table and `model_runs`, nights and windows carrying the run that wrote them | 2.5b | done and installed 2026-09-15 |
 | 2.7 | Package and class names interned into lookup tables (about 58% smaller raw_events, nothing lost) | a manual migration tested on a phone copy, with the old table kept one release | before the database reaches a year; not urgent |
 | 3.5 | Bayesian online changepoint sentinel on nightly onset and 7-day SRI | 60 nights, about 3 Nov 2026 | after 3a and 3b |
 | 5 | Tier 3: PELT eras, elastic net, a mixture model of night types, refits, on a charging and idle worker | 180 nights, about March 2027 | last |
 
-- **Every raw event stays.** The analytics spec's storage arithmetic matches this phone: about 1,830 events a day, and the whole database with derived tables was 2.8 MB after 10.5 days.
+- **Every raw event stays.** The analytics spec's storage arithmetic matches this phone: about 1,830 events a day, and the whole database with derived tables was 2.9 MB after 11 days.
 - **Tier 0 already exists.** NightRecomputer writes each night's figures in the same transaction as sessions.
-- **Tier 1 runs inside that recompute, not as a weekly worker.** It costs milliseconds, keeps "incremental equals full" testable, and avoids a second background job for ColorOS to kill.
-- **The scorer's input is all primary data, not events alone.** Entered sleep times, charging samples and light samples change results as much as events do.
-- **SRI choices are pinned in code** because packages disagree enough to change study conclusions (RIRI statement, SLEEP 2026): 1-minute epochs, noon-to-noon days, a day counts at 80% known, unknown epochs left out pairwise, the compared share must reach 80%, at least 7 counted days in consecutive pairs, reported from −100 to 100. GGIR differs (30 s epochs, day pairs dropped below 66% valid).
+- **Tier 1 runs inside that recompute, not as a weekly worker.** It costs milliseconds, keeps "incremental equals full" testable (WindowMetricsTest), and avoids a second background job for ColorOS to kill. Windows are keyed by the night they end on, so a recompute from a night rewrites exactly the windows that can include it.
+- **The scorer's input is all primary data, not events alone.** Entered sleep times, charging samples and light samples change results as much as events do. `RegularityWindows.compute` is the pure function; the database layer only loads and stores.
+- **SRI choices are pinned in code** because packages disagree enough to change study conclusions (RIRI statement, SLEEP 2026): 1-minute epochs, noon-to-noon days, a day counts at 80% known, unknown epochs left out pairwise, the compared share must reach 80%, at least 7 counted days in consecutive pairs, reported from −100 to 100. GGIR differs (30 s epochs, day pairs dropped below 66% valid). A day is known only when its night has a verdict, so a night still under way never counts as awake.
 - **Naps are absent from Nocturne's SRI.** Sleep inference finds one main sleep a night, so this is main-sleep regularity. Sleepless nights count as awake, which is what they were.
-- **IS and IV from screen activity are a proxy, and will be labelled so.** A 2024 JMIR study found phone-derived IS and IV significantly lower than actigraphy's and dropped relative amplitude as uninformative; IV also moves with epoch length. 2.5b pins Van Someren's hourly bins and checks the values against sleep inference before showing them.
-- **Social jetlag needs work and free days.** Weekends by default with a setting, since a student's week is not an office week.
+- **IS, IV, RA, L5/M10 and CFI come from screen use and are labelled so.** The activity series is the share of each minute the screen was on. A 2024 JMIR study found phone-derived IS and IV significantly lower than actigraphy's and dropped relative amplitude as uninformative, so none of these is compared with actigraphy norms. IS and IV use Van Someren's hourly means (an hour counts with 30 known minutes; IV compares only neighbouring known hours, because IV moves with epoch length); L5 and M10 use the minute-by-minute average day with windows that wrap, ties to the earliest start from noon; CFI averages IS, (2 − IV)/2 and RA (Ortiz-Tudela 2010). Checking these against sleep inference, as the analytics spec asks, is still to do: for now the 7-night L5 starting at 07:08 sits inside the sleep the model found, which is consistent but not a validation.
+- **Composite phase deviation derives the chronotype from the window itself,** as the MCTQ defines MSFsc (free-night midsleep, corrected for sleeping in when free-night sleep is longer), because Nocturne has no questionnaire. The MCTQ withholds MSFsc when an alarm is used on free days; the phone cannot tell. A night counts when the night before has times, needing 6 such pairs.
+- **Social jetlag is |MSF − MSW|** (Wittmann 2006), with Friday and Saturday nights as free nights by default, a setting rather than a constant since a student's week is not an office week.
+- **Onset spread is the sample standard deviation** of onset in minutes after noon, so late-night and early-morning onsets sit on one unbroken scale.
+- **A model run is reused while nothing changes.** Its key is the classifier, sleep and metrics versions plus the sleep, display, light and free-night configuration as their data classes print. The classifier's package lists are left out (a new launcher is not a new model), and the configuration is stored as readable text rather than parsed JSON. Sessions do not carry a run id: they depend only on the classifier version, which the run records.
 - **The sensitivity fit stays in Phase 3c at 30 nights,** as the main spec says, and Tier 3 re-runs it later. The analytics spec bundles it into Phase 5, which would wait for 180 nights with no statistical reason.
 - **Cold-tier compression waits until year three,** as the analytics spec itself says.
 
@@ -125,10 +135,10 @@ Where each part of the analytics spec lands among the phases above, and where th
 3. Patterns shows one sleep bar per night; entered nights are solid, estimates lighter, sleepless nights a ring.
 4. 2c passes when at least 80% of 14 labelled nights have an estimated onset within 30 min of your times, scored leave-one-out.
 
-## Phone checks for 2b (after 1e passes)
+## Phone checks for 2b
 
-1. Before turning light on, check Settings, Light: the sensor, the screen model and "Warm display filter now" read on between 22:00 and 07:00 and off by day (not "not readable"). By day, `adb shell settings get system oplus_customize_eye_protect_enable` should still say 1: the flag means "scheduled", as the code assumes.
-2. Tap "Start measuring light". Settings shows the sampler running and, within a minute of the screen coming on, a last sample time.
+1. Settings, Light: "Warm display filter now" reads on between 22:00 and 07:00 and off by day (not "not readable"). By day, `adb shell settings get system oplus_customize_eye_protect_enable` should still say 1: the flag means "scheduled", as the code assumes.
+2. Settings shows the sampler running and, within a minute of the screen coming on, a last sample time.
 3. `adb shell dumpsys sensorservice` lists Nocturne as a light sensor client while the screen is on, and not after screen-off.
 4. Cover the sensor with a finger: the next sample's lux drops. In a dark room at minimum brightness expect about 0 lux (the stk33c01 read 0.00 at 02:44 with the screen at setting 13).
 5. Overnight with the screen off, the service survives until morning, or Settings shows when a start was refused. Last night's coverage line shows how many screen-on minutes were measured.
@@ -161,6 +171,7 @@ Phase 2:
 - **Screen light includes a content-level factor.** A dark interface is mostly black; the spec's formula assumes a full-white screen. It is an assumption with a wide range (0.05 to 0.5 for dark UI), stated as such.
 - **Sleep inference is a per-night change-point model, not "last screen-off before a gap over 4 h".** On this phone's real nights the 4 h rule fails: several nights hold 3 h blocks, and a 1 s check at 04:16 splits an 8 h night. As in SensibleSleep (Cuttone et al. 2017), user-initiated sessions arrive as Poisson processes at a low rate while asleep and at the night's own rate while awake; the most likely onset/wake pair wins, with soft priors on duration and, after 7 nights, on usual onset. Wakes the phone caused (a notification, the alarm notice) with nobody touching it are ignored.
 - **Onset sees past the screen-off timeout.** The A18 is set to 30 min. A session that timed out is cut back to its last activity, unless the screen was switched back on within 2 min (seen on the phone: a browser timing out and being woken 4 s later).
+- **Onsets reach past 06:00 to noon when the wake is observed** (sleep model 3), so the sleep after a night awake can be placed. See "No-sleep nights".
 - **No estimate for nights the history does not cover**, from before the first harvest or still under way (before 06:00 the next morning). Every estimate keeps its runner-up explanation.
 - **A night can have no sleep.** The spec assumes every night holds one; see "No-sleep nights" above. A night's confidence is scaled by the chance it held sleep at all.
 - **Charging is sampled at each harvest**, not by an `ACTION_POWER_CONNECTED` receiver, which cannot be declared in the manifest for modern targets. A charging phone is out of Doze, so samples come every 15 min.
@@ -182,6 +193,8 @@ Phase 2b:
 - **Service starts follow Android's background rules.** Android 15 still lets `specialUse` start from BOOT_COMPLETED (only camera, dataSync, mediaPlayback, mediaProjection, microphone and phoneCall are barred); the harvester's runs rely on the battery-optimisation exemption; a refused start is recorded, never thrown.
 - **Notification permission is optional.** Since Android 13 a foreground service runs without it and is listed under active apps instead of in the notification shade.
 - **Schema 3 was amended before its first install** with the no-sleep and falling-asleep columns, so the phone went from 2 to 3 once.
+
+Analytics: see "Analytics layer" above.
 
 ## Device facts that matter later
 

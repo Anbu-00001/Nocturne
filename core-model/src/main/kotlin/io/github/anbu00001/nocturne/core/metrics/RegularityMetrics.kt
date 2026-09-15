@@ -8,7 +8,7 @@ import java.time.LocalDate
  * One day from noon to noon, so a night is never split, as 1-minute sleep states: [ASLEEP], [AWAKE] or [UNKNOWN].
  * Epoch 0 is 12:00 local on [date]; epoch 720 is midnight.
  */
-class SleepDay(val date: LocalDate, states: ByteArray) {
+class SleepDay(override val date: LocalDate, states: ByteArray) : CoveredDay {
     private val states = states.copyOf()
 
     init {
@@ -20,7 +20,7 @@ class SleepDay(val date: LocalDate, states: ByteArray) {
 
     val knownEpochs: Int = states.count { it != UNKNOWN }
 
-    val coverage: Double get() = knownEpochs.toDouble() / EPOCHS
+    override val coverage: Double get() = knownEpochs.toDouble() / EPOCHS
 
     companion object {
         const val EPOCHS = 24 * 60
@@ -33,7 +33,7 @@ class SleepDay(val date: LocalDate, states: ByteArray) {
          * Everything known and outside the intervals is awake. [offsetMinutes] is the UTC offset at the day's noon.
          */
         fun fromIntervals(date: LocalDate, offsetMinutes: Int, sleep: List<LongRange>, knownFromTs: Long, knownToTs: Long): SleepDay {
-            val noon = localMidnightUtc(date, offsetMinutes) + LocalClock.NIGHT_BOUNDARY_HOUR * LocalClock.HOUR_MS
+            val noon = noonUtc(date, offsetMinutes)
             val states = ByteArray(EPOCHS) { j ->
                 val t = noon + j * LocalClock.MINUTE_MS
                 when {
@@ -46,6 +46,9 @@ class SleepDay(val date: LocalDate, states: ByteArray) {
         }
     }
 }
+
+internal fun noonUtc(date: LocalDate, offsetMinutes: Int): Long =
+    localMidnightUtc(date, offsetMinutes) + LocalClock.NIGHT_BOUNDARY_HOUR * LocalClock.HOUR_MS
 
 /**
  * Sleep Regularity Index (Phillips et al., Sci Rep 2017): the chance of being in the same state, asleep or awake, at
@@ -65,7 +68,7 @@ class SleepDay(val date: LocalDate, states: ByteArray) {
  * - At least 7 counted days, compared only with the next calendar day, so 6 consecutive pairs at minimum.
  * - Reported on the -100 to 100 scale, not rescaled to 0 to 100.
  */
-object SleepRegularityIndex : Metric {
+object SleepRegularityIndex : Metric<SleepDay> {
     override val requirement = DataRequirement(minNights = 7, minCoverage = 0.8)
 
     override fun compute(days: List<SleepDay>): MetricResult {

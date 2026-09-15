@@ -47,18 +47,29 @@ import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.data.ExtraStore
 import io.github.anbu00001.nocturne.NocturneApp
+import io.github.anbu00001.nocturne.core.metrics.MetricKey
+import io.github.anbu00001.nocturne.core.metrics.WithheldReason
 import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.NightTotals
+import io.github.anbu00001.nocturne.data.WindowMetricEntity
 import io.github.anbu00001.nocturne.tone.Tone
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.ceil
 import kotlin.math.floor
+
+/** The regularity windows ending on the latest night that has a verdict. */
+data class Regularity(val endDate: String, val rows: List<WindowMetricEntity>)
 
 /** The payoff screen (spec §8): every harvested night, however long ago. */
 class PatternsViewModel(app: NocturneApp) : ViewModel() {
@@ -68,6 +79,13 @@ class PatternsViewModel(app: NocturneApp) : ViewModel() {
 
     val sleep: StateFlow<List<NightEntity>> = app.database.sleep().observeNights()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val regularity: StateFlow<Regularity?> = app.database.sleep().observeNights()
+        .map { nights -> nights.lastOrNull { it.noSleep || it.estimatedSleepOnset != null }?.dateOfNight }
+        .distinctUntilChanged()
+        .flatMapLatest { date -> if (date == null) flowOf(null) else app.database.metrics().observeWindows(date).map { Regularity(date, it) } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     // Vico: the producer a chart uses must not be replaced, so it lives as long as the screen's view model.
     val glancesProducer = CartesianChartModelProducer()
@@ -79,6 +97,7 @@ fun PatternsScreen(app: NocturneApp) {
     val vm = viewModel { PatternsViewModel(app) }
     val loaded by vm.nights.collectAsStateWithLifecycle()
     val sleep by vm.sleep.collectAsStateWithLifecycle()
+    val regularity by vm.regularity.collectAsStateWithLifecycle()
     val nights = loaded ?: return
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
 
@@ -97,9 +116,58 @@ fun PatternsScreen(app: NocturneApp) {
                 color = muted,
             )
             SleepChart(sleep)
+            RegularitySection(regularity)
             NightColumnChart(Tone.Patterns.GLANCES_PER_NIGHT, vm.glancesProducer, nights) { it.glances }
             NightColumnChart(Tone.Patterns.EVENING_MINUTES, vm.eveningProducer, nights) { it.eveningScreenMs / 60_000 }
         }
+    }
+}
+
+/**
+ * Analytics Tier 1 in words, for the 7- and 28-night windows ending on the latest judged night. A withheld metric says
+ * what it is missing instead of showing a provisional number (NOCTURNE_ANALYTICS.md §2).
+ */
+@Composable
+private fun RegularitySection(regularity: Regularity?) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Text(Tone.Patterns.REGULARITY, style = MaterialTheme.typography.titleMedium)
+    val rows = regularity?.rows.orEmpty()
+    for (days in listOf(7, 28)) {
+        val byKey = rows.filter { it.windowDays == days }.mapNotNull { row -> runCatching { MetricKey.valueOf(row.metric) }.getOrNull()?.let { it to row } }.toMap()
+        if (byKey.isEmpty()) continue
+        Text(Tone.Patterns.regularityWindow(days), style = MaterialTheme.typography.titleSmall)
+        Text(Tone.Patterns.SLEEP_TIMING, style = MaterialTheme.typography.labelLarge, color = muted)
+        for (key in listOf(MetricKey.SRI, MetricKey.ONSET_SD, MetricKey.SOCIAL_JETLAG, MetricKey.CPD)) {
+            byKey[key]?.let { Text(metricLine(key, it), color = if (it.value == null) muted else MaterialTheme.colorScheme.onSurface) }
+        }
+        Text(Tone.Patterns.SCREEN_RHYTHM, style = MaterialTheme.typography.labelLarge, color = muted)
+        for (key in listOf(MetricKey.IS, MetricKey.IV, MetricKey.L5, MetricKey.M10, MetricKey.RA, MetricKey.CFI)) {
+            byKey[key]?.let { Text(metricLine(key, it), color = if (it.value == null) muted else MaterialTheme.colorScheme.onSurface) }
+        }
+    }
+    Text(Tone.Patterns.REGULARITY_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+}
+
+private fun metricLine(key: MetricKey, row: WindowMetricEntity): String {
+    val name = Tone.Patterns.metricName(key)
+    val value = row.value ?: return when (row.withheldReason?.let { runCatching { WithheldReason.valueOf(it) }.getOrNull() }) {
+        WithheldReason.TOO_FEW_NIGHTS -> Tone.Patterns.needsNights(name, row.have, row.need)
+        WithheldReason.TOO_FEW_DAY_PAIRS -> Tone.Patterns.needsPairs(name, row.have, row.need)
+        WithheldReason.LOW_COVERAGE -> Tone.Patterns.needsCoverage(name, row.have, row.need)
+        WithheldReason.MISSING_DAY_TYPES -> Tone.Patterns.needsDayTypes(name)
+        WithheldReason.NO_VARIATION, null -> Tone.Patterns.noVariation(name)
+    }
+    return when (key) {
+        MetricKey.SRI -> Tone.Patterns.sri("%.0f".format(value))
+        MetricKey.ONSET_SD -> Tone.Patterns.onsetSpread(Tone.Patterns.roundedMinutes(value))
+        MetricKey.SOCIAL_JETLAG -> Tone.Patterns.socialJetlag(Tone.Patterns.roundedMinutes(value))
+        MetricKey.CPD -> Tone.Patterns.phaseDeviation("%.1f".format(value))
+        MetricKey.IS -> Tone.Patterns.stability("%.2f".format(value))
+        MetricKey.IV -> Tone.Patterns.fragmentation("%.2f".format(value))
+        MetricKey.L5 -> Tone.Patterns.quietest(row.atMinute?.let(::minuteText) ?: "")
+        MetricKey.M10 -> Tone.Patterns.busiest(row.atMinute?.let(::minuteText) ?: "")
+        MetricKey.RA -> Tone.Patterns.amplitude("%.2f".format(value))
+        MetricKey.CFI -> Tone.Patterns.functionIndex("%.2f".format(value))
     }
 }
 

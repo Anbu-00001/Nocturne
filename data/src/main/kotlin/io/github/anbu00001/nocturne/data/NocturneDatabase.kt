@@ -9,9 +9,10 @@ import androidx.room.RoomDatabase
 /**
  * Schema 2 (Phase 2) only adds: the sleep_reports and power_samples tables, sessions.lastActivityTs, and the
  * nights table's raw-inference and window columns. Schema 3 (Phase 2b) only adds light_samples' duration and
- * display-state columns and the nights table's light coverage columns. Additive changes are what Room's
- * AutoMigration handles; MigrationTest builds schema-1 and schema-2 files from their JSON and opens them, and
- * each migration is run against a copy of the database pulled from the phone before installing.
+ * display-state columns and the nights table's light coverage columns. Schema 4 (analytics 2.6) only adds the
+ * window_metrics and model_runs tables and nights.modelRunId. Additive changes are what Room's AutoMigration
+ * handles; MigrationTest builds each earlier schema from its JSON and opens it, and each migration is run against
+ * a copy of the database pulled from the phone before installing.
  */
 @Database(
     entities = [
@@ -26,16 +27,19 @@ import androidx.room.RoomDatabase
         FocusBlockEntity::class,
         ZoneChangeEntity::class,
         HarvestRunEntity::class,
+        WindowMetricEntity::class,
+        ModelRunEntity::class,
     ],
-    version = 3,
+    version = 4,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
 )
 abstract class NocturneDatabase : RoomDatabase() {
     abstract fun rawEvents(): RawEventDao
     abstract fun sessions(): SessionDao
     abstract fun sleep(): SleepDao
     abstract fun light(): LightDao
+    abstract fun metrics(): MetricsDao
     abstract fun harvest(): HarvestDao
 
     companion object {

@@ -101,6 +101,36 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun schemaThreeMigratesToFourAddingRunsAndWindowMetrics() = runTest {
+        val file = freshFile("migration-test-3.db")
+        createSchema(file, version = 3) { db ->
+            db.execSQL("INSERT INTO raw_events (timestamp, utcOffsetMinutes, eventType, packageName, className) VALUES (1000, 330, 15, 'android', '')")
+            db.execSQL(
+                """INSERT INTO nights (dateOfNight, estimatedSleepOnset, estimatedWakeTime, confidence, source, eveningScreenMinutes,
+                   postOnsetInterruptions, modelledSuppressionPct, suppressionLowPct, suppressionHighPct, modelledPhaseShiftMin,
+                   melanopicDoseLuxHours, inferredSleepOnset, inferredWakeTime, inferredConfidence, utcOffsetMinutes,
+                   eveningWindowStartMinute, eveningWindowEndMinute, windowPersonalised, windowNights, lightScreenMinutes,
+                   lightMeasuredMinutes, suppressionDurationClamped, noSleep, inferredNoSleep)
+                   VALUES ('2026-09-14', NULL, NULL, 0.0, 'INFERRED', 0, 0, NULL, NULL, NULL, NULL, NULL, NULL, NULL, 0.0, 330,
+                   1260, 420, 0, 0, 0, 0, 0, 1, 1)""",
+            )
+        }
+
+        val room = open(file)
+        try {
+            assertEquals(1L, room.rawEvents().count())
+            val night = room.sleep().nights().single()
+            assertEquals(0L, night.modelRunId)
+            assertEquals(true, night.noSleep)
+            val run = ModelRuns(room) { 5L }.current("3.3.1", "config")
+            room.metrics().upsertWindows(listOf(WindowMetricEntity("2026-09-14", 7, "SRI", null, null, 0, 0.0, "TOO_FEW_NIGHTS", 1, 7, run)))
+            assertEquals(1, room.metrics().allWindows().size)
+        } finally {
+            room.close()
+        }
+    }
+
     private fun freshFile(name: String): File = context.getDatabasePath(name).apply {
         parentFile?.mkdirs()
         delete()

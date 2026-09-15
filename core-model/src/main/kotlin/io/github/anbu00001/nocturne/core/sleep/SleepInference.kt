@@ -13,7 +13,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /** Bump when sleep inference changes; the app then re-derives every night (spec §5). */
-const val SLEEP_MODEL_VERSION = 2
+const val SLEEP_MODEL_VERSION = 3
 
 /** One screen session as sleep inference sees it. */
 data class NightSession(
@@ -65,11 +65,12 @@ data class SleepConfig(
     val onsetEarliestMinute: Int = 20 * 60,
     val onsetLatestMinute: Int = 6 * 60,
     /**
-     * When the night itself looks sleepless, onsets from [onsetLatestMinute] up to this are searched too: the sleep
-     * that follows a night spent awake starts in the morning (the A18, night of 14 Sept). Only then, so a quiet
-     * morning or afternoon never replaces an ordinary night's sleep.
+     * Onsets after [onsetLatestMinute] and up to this are weighed too, but only with a wake the phone saw: the sleep
+     * after a night spent awake starts in the morning (the A18, 14 Sept: in use until 07:30, quiet until 11:51). A
+     * morning onset "still asleep" at the window's edge is not accepted, so a quiet afternoon at the end of the
+     * history cannot pass for sleep.
      */
-    val afterNoSleepOnsetLatestMinute: Int = 12 * 60,
+    val lateOnsetLatestMinute: Int = 12 * 60,
     /** Each night is scored from 18:00 on its evening to 16:00 the next day. */
     val windowStartHour: Int = 18,
     val windowEndHour: Int = 16,
@@ -203,22 +204,20 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
     fun infer(night: NightInput, prior: PersonalPrior?): SleepEstimate? {
         val midnight = localMidnightUtc(night.date, night.offsetMinutes)
         val onsetFrom = midnight + config.onsetEarliestMinute * LocalClock.MINUTE_MS
-        val onsetTo = midnight + LocalClock.DAY_MS + config.onsetLatestMinute * LocalClock.MINUTE_MS
+        val usualOnsetTo = midnight + LocalClock.DAY_MS + config.onsetLatestMinute * LocalClock.MINUTE_MS
+        val lateOnsetTo = midnight + LocalClock.DAY_MS + config.lateOnsetLatestMinute * LocalClock.MINUTE_MS
 
         // No estimate for a night the history does not reach back to, or one still under way: until the
-        // history passes the latest plausible onset, the user may simply still be up.
-        if (night.dataFromTs > onsetFrom || night.dataToTs < onsetTo) return null
-        val overnight = search(night, prior, onsetFrom, onsetTo, edgeOnset = true) ?: return null
-        if (!overnight.noSleep) return overnight
-
-        // The night looks sleepless. The sleep after a night awake starts in the morning, so look there before
-        // settling on no sleep; a morning stretch that also looks more like time away changes nothing.
-        val lateTo = midnight + LocalClock.DAY_MS + config.afterNoSleepOnsetLatestMinute * LocalClock.MINUTE_MS
-        return search(night, prior, onsetTo, lateTo, edgeOnset = false)?.takeUnless { it.noSleep } ?: overnight
+        // history passes the latest usual onset, the user may simply still be up.
+        if (night.dataFromTs > onsetFrom || night.dataToTs < usualOnsetTo) return null
+        return search(night, prior, onsetFrom, usualOnsetTo, lateOnsetTo)
     }
 
-    /** The best sleep with its onset in [onsetFrom, onsetTo], or null when no stretch qualifies. */
-    private fun search(night: NightInput, prior: PersonalPrior?, onsetFrom: Long, onsetTo: Long, edgeOnset: Boolean): SleepEstimate? {
+    /**
+     * The best sleep with its onset between [onsetFrom] and [onsetTo], or null when no stretch qualifies. An onset
+     * after [usualOnsetTo] needs a wake the phone saw.
+     */
+    private fun search(night: NightInput, prior: PersonalPrior?, onsetFrom: Long, usualOnsetTo: Long, onsetTo: Long): SleepEstimate? {
         val midnight = localMidnightUtc(night.date, night.offsetMinutes)
         val windowStart = midnight + config.windowStartHour * LocalClock.HOUR_MS
         val windowEnd = midnight + LocalClock.DAY_MS + config.windowEndHour * LocalClock.HOUR_MS
@@ -236,11 +235,11 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
 
         val candidates = ArrayList<Candidate>()
         val onsets = marks.map { it.activeEndTs }.filter { it in onsetFrom..minOf(onsetTo, searchEnd) }.distinct().map { it to true } +
-            (if (edgeOnset) listOf(onsetFrom to false) else emptyList())
+            (onsetFrom to false)
         for ((onset, onsetAnchored) in onsets) {
             val latestWake = minOf(windowEnd, onset + config.maxSleepMs)
-            // Only claim "still asleep at the edge" if the history actually reaches that edge.
-            val openEnded = if (night.dataToTs >= latestWake) listOf(latestWake to false) else emptyList()
+            // Only claim "still asleep at the edge" if the history actually reaches that edge, and never for a morning onset.
+            val openEnded = if (night.dataToTs >= latestWake && onset <= usualOnsetTo) listOf(latestWake to false) else emptyList()
             val wakes = marks.map { it.startTs }
                 .filter { it >= onset + config.minSleepMs && it <= latestWake }
                 .distinct()

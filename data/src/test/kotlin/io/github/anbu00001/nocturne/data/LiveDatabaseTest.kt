@@ -56,6 +56,13 @@ class LiveDatabaseTest {
                     val versionAfter = room.openHelper.readableDatabase.version
                     appendLine("schema $versionBefore -> $versionAfter, raw events $rawBefore before and ${room.rawEvents().count()} after, sessions $sessions")
                     nights.forEach { appendLine(it.toString()) }
+                    val lastJudged = nights.lastOrNull { it.noSleep || it.estimatedSleepOnset != null }?.dateOfNight
+                    appendLine()
+                    appendLine("regularity windows ending on $lastJudged:")
+                    room.metrics().allWindows().filter { it.endDate == lastJudged }.forEach { w ->
+                        appendLine("  ${w.windowDays}d ${w.metric}: " + (w.value?.let { "%.3f".format(it) + (w.atMinute?.let { m -> " at %02d:%02d".format(m / 60, m % 60) } ?: "") } ?: "${w.withheldReason} ${w.have}/${w.need}"))
+                    }
+                    appendLine("model runs: ${room.metrics().latestRun()}")
                 },
             )
             assertTrue(nights.any { it.estimatedSleepOnset != null })

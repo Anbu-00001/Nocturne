@@ -142,6 +142,49 @@ data class NightEntity(
     @ColumnInfo(defaultValue = "0") val noSleep: Boolean = false,
     /** Schema 3. The raw inference found no sleep, whatever the user entered; the inferred times are then the quiet stretch that lost. */
     @ColumnInfo(defaultValue = "0") val inferredNoSleep: Boolean = false,
+    /** Schema 4. The model run that wrote this row (analytics §6.2); 0 for rows written before runs were recorded. */
+    @ColumnInfo(defaultValue = "0") val modelRunId: Long = 0,
+)
+
+/**
+ * Schema 4, Tier 1 of the analytics layer: one regularity metric over the [windowDays] nights ending on [endDate].
+ * Derived and rebuildable. A withheld metric keeps its reason and counts instead of a value.
+ */
+@Entity(tableName = "window_metrics", primaryKeys = ["endDate", "windowDays", "metric"])
+data class WindowMetricEntity(
+    val endDate: String,
+    val windowDays: Int,
+    /** A MetricKey name. */
+    val metric: String,
+    val value: Double?,
+    /** A local clock minute where the metric has one: the start of L5 or M10. */
+    val atMinute: Int?,
+    val nights: Int,
+    val coverage: Double,
+    /** A WithheldReason name when [value] is null. */
+    val withheldReason: String?,
+    val have: Int,
+    val need: Int,
+    val modelRunId: Long,
+)
+
+/**
+ * Schema 4. One scoring configuration in use (analytics §6.2), so "did my SRI change, or did the formula?" has an
+ * answer. A run is reused while the model versions and configuration stay the same; a change to either starts one.
+ */
+@Entity(tableName = "model_runs")
+data class ModelRunEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val startedAt: Long,
+    val lastUsedAt: Long,
+    /** "classifier.sleep.metrics", for example "3.3.1". */
+    val modelVersion: String,
+    /** Why the run started: FIRST, MODEL_CHANGE or CONFIG_CHANGE. */
+    val trigger: String,
+    /** The configuration in force as the model's own data classes print it: readable and diffable, never parsed back. */
+    val configText: String,
+    /** Parameters fitted from the user's data (Tier 3); null until something is fitted. */
+    val fittedParamsJson: String? = null,
 )
 
 /** "I slept about X to Y", or "I did not sleep" (spec §6.3). User data: kept through every recompute, removed only by the user. */

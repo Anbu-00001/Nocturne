@@ -209,6 +209,36 @@ interface LightDao {
 }
 
 @Dao
+interface MetricsDao {
+    @Upsert
+    suspend fun upsertWindows(rows: List<WindowMetricEntity>)
+
+    @Query("DELETE FROM window_metrics WHERE endDate >= :fromDate")
+    suspend fun deleteWindowsFrom(fromDate: String)
+
+    @Query("SELECT * FROM window_metrics ORDER BY endDate, windowDays, metric")
+    suspend fun allWindows(): List<WindowMetricEntity>
+
+    @Query("SELECT * FROM window_metrics WHERE endDate = :endDate ORDER BY windowDays, metric")
+    fun observeWindows(endDate: String): Flow<List<WindowMetricEntity>>
+
+    @Insert
+    suspend fun insertRun(run: ModelRunEntity): Long
+
+    @Query("SELECT * FROM model_runs ORDER BY id DESC LIMIT 1")
+    suspend fun latestRun(): ModelRunEntity?
+
+    @Query("SELECT * FROM model_runs WHERE id = :id")
+    suspend fun run(id: Long): ModelRunEntity?
+
+    @Query("UPDATE model_runs SET lastUsedAt = :at WHERE id = :id")
+    suspend fun touchRun(id: Long, at: Long)
+
+    @Query("SELECT * FROM model_runs ORDER BY id DESC LIMIT 1")
+    fun observeLatestRun(): Flow<ModelRunEntity?>
+}
+
+@Dao
 interface HarvestDao {
     @Insert
     suspend fun insertRun(run: HarvestRunEntity): Long

@@ -1,6 +1,7 @@
 package io.github.anbu00001.nocturne.tone
 
 import io.github.anbu00001.nocturne.core.glance.SessionKind
+import io.github.anbu00001.nocturne.core.metrics.MetricKey
 
 /**
  * Every user-facing sentence in Nocturne, in one place so it can be audited as a unit
@@ -199,6 +200,48 @@ object Tone {
         fun sleepDetail(night: String, onset: String, wake: String, source: String) = "$night: $onset to $wake, $source"
         const val SOURCE_ESTIMATED = "estimated"
         const val SOURCE_REPORTED = "entered by you"
+
+        const val REGULARITY = "Regularity"
+        const val REGULARITY_NOTE =
+            "Each figure waits for its window to hold enough recorded nights. Sleep figures come from the sleep estimates " +
+                "and your entered times; rhythm figures come from screen use, not movement, so they are not comparable " +
+                "with actigraphy studies."
+        fun regularityWindow(nights: Int) = "Last $nights nights"
+        const val SLEEP_TIMING = "Sleep timing"
+        const val SCREEN_RHYTHM = "Screen-use rhythm"
+
+        /** Minute-valued figures to the whole minute: a regularity window cannot resolve seconds. */
+        fun roundedMinutes(minutes: Double): String =
+            if (minutes < 1) "under 1m" else duration(kotlin.math.round(minutes).toLong() * 60_000)
+
+        fun sri(value: String) = "Sleep Regularity Index: $value, where 100 is the same sleep every day and 0 no pattern"
+        fun onsetSpread(duration: String) = "Sleep onset spread: $duration (standard deviation)"
+        fun socialJetlag(duration: String) = "Free-night and work-night midsleep are $duration apart"
+        fun phaseDeviation(hours: String) = "Composite phase deviation: $hours h a night on average"
+        fun stability(value: String) = "Day-to-day stability (IS): $value of 1"
+        fun fragmentation(value: String) = "Hour-to-hour fragmentation (IV): $value, where 0 is smooth and 2 is noise"
+        fun quietest(start: String) = "Quietest 5 hours start around $start"
+        fun busiest(start: String) = "Busiest 10 hours start around $start"
+        fun amplitude(value: String) = "Relative amplitude (RA): $value of 1"
+        fun functionIndex(value: String) = "Circadian function index: $value of 1"
+
+        fun metricName(key: MetricKey): String = when (key) {
+            MetricKey.SRI -> "The Sleep Regularity Index"
+            MetricKey.ONSET_SD -> "Sleep onset spread"
+            MetricKey.SOCIAL_JETLAG -> "Social jetlag"
+            MetricKey.CPD -> "Composite phase deviation"
+            MetricKey.IS -> "Stability (IS)"
+            MetricKey.IV -> "Fragmentation (IV)"
+            MetricKey.L5 -> "The quietest 5 hours"
+            MetricKey.M10 -> "The busiest 10 hours"
+            MetricKey.RA -> "Relative amplitude"
+            MetricKey.CFI -> "The circadian function index"
+        }
+        fun needsNights(name: String, have: Int, need: Int) = "$name needs $need recorded nights in this window; $have so far"
+        fun needsPairs(name: String, have: Int, need: Int) = "$name needs $need back-to-back pairs of nights; $have so far"
+        fun needsCoverage(name: String, have: Int, need: Int) = "$name needs $need% of the window recorded; $have% so far"
+        fun needsDayTypes(name: String) = "$name needs both free nights and work nights in the window"
+        fun noVariation(name: String) = "$name is undefined while screen use does not vary"
     }
 
     object Settings {
