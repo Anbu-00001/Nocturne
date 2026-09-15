@@ -1,0 +1,17 @@
+nparACT reference environment (checked 2026-09-15)
+
+R 4.5.3 from conda-forge, nparACT 0.9.1 from CRAN. nparACT is pure R; conda-forge has no r-nparact, so its
+dependencies come from conda-forge as binaries and nparACT itself from CRAN. pyActigraphy 1.2.2 was tried first and
+does not install on Python 3.11 or 3.12 (its pinned numba and scikit-learn need source builds).
+
+  conda create -p .renv -c conda-forge --override-channels r-base=4.5.3 r-zoo r-ggplot2 r-stringr
+  .renv/bin/Rscript -e 'install.packages("nparACT", repos = "https://cloud.r-project.org")'
+
+nparact_golden.R stops unless nparACT is 0.9.1.
+
+Regenerate the synthetic golden files (core-model NparactGoldenTest):
+  .renv/bin/Rscript tools/actigraphy/nparact_golden.R --synthetic core-model/src/test/resources/nparact
+
+Cross-check the phone's own week (personal data: keep the minutes file out of the repository):
+  NOCTURNE_LIVE_DB=nocturne.db ./gradlew :data:testDebugUnitTest --tests '*LiveDatabaseTest*'
+  .renv/bin/Rscript tools/actigraphy/nparact_golden.R data/build/live-activity-minutes.txt

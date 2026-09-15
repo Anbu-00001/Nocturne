@@ -87,9 +87,9 @@ class SessionRecomputer(private val db: NocturneDatabase) {
     }
 }
 
-fun RawEventEntity.toUsageEvent() = UsageEvent(timestamp, eventType, packageName, className.ifEmpty { null })
+fun RawEvent.toUsageEvent() = UsageEvent(timestamp, eventType, packageName, className.ifEmpty { null })
 
-fun UsageEvent.toEntity(utcOffsetMinutes: Int) = RawEventEntity(
+fun UsageEvent.toRawEvent(utcOffsetMinutes: Int) = RawEvent(
     timestamp = timestamp,
     utcOffsetMinutes = utcOffsetMinutes,
     eventType = type,

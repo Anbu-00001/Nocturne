@@ -2,11 +2,17 @@ package io.github.anbu00001.nocturne.core.metrics
 
 import java.time.LocalDate
 
-/** Bump when any metric's formula or pinned choice changes; derived rows then carry a new model run (analytics §6.2). */
-const val METRICS_VERSION = 1
+/**
+ * Bump when any metric's formula or pinned choice changes, or a metric is added; derived rows then carry a new model
+ * run (analytics §6.2). 2: the sleep check ([ProxyCheck]) and L5/M10 ties going to the middle of a quiet plateau.
+ */
+const val METRICS_VERSION = 2
 
-/** Stable keys stored with every window row. Never rename one; add a new key instead. */
-enum class MetricKey { SRI, ONSET_SD, SOCIAL_JETLAG, CPD, IS, IV, L5, M10, RA, CFI }
+/**
+ * Stable keys stored with every window row. Never rename one; add a new key instead. IS_SLEEP, IV_SLEEP and L5_ASLEEP
+ * check the screen-use keys against sleep inference ([ProxyCheck]).
+ */
+enum class MetricKey { SRI, ONSET_SD, SOCIAL_JETLAG, CPD, IS, IV, L5, M10, RA, CFI, IS_SLEEP, IV_SLEEP, L5_ASLEEP }
 
 /** One night as the regularity metrics see it. */
 data class NightRecord(
@@ -32,6 +38,7 @@ data class WindowValue(val endDate: LocalDate, val windowDays: Int, val metric: 
  *   still under way, or never estimated, leaves its whole day unknown rather than awake.
  * - Sleep inside a day comes from that night and its neighbours, so a wake after noon lands in the next day.
  * - An activity day is the share of each minute the screen was on, known wherever the history reaches.
+ * - A wakefulness day is the sleep day as 1 awake and 0 asleep, the reference the screen-use figures are checked with.
  */
 object RegularityWindows {
     val WINDOW_DAYS = listOf(7, 14, 28)
@@ -69,6 +76,9 @@ object RegularityWindows {
             }
         }
 
+        val wakeDays = HashMap<LocalDate, ActivityDay>()
+        fun wakeDay(date: LocalDate): ActivityDay = wakeDays.getOrPut(date) { ActivityDay.fromSleepDay(sleepDay(date)) }
+
         val activityDays = HashMap<LocalDate, ActivityDay>()
         fun activityDay(date: LocalDate): ActivityDay = activityDays.getOrPut(date) {
             val offset = offsetFor(date)
@@ -96,6 +106,7 @@ object RegularityWindows {
             for (length in windows) {
                 val dates = (length - 1 downTo 0).map { end.minusDays(it.toLong()) }
                 val sleep = dates.map(::sleepDay)
+                val wake = dates.map(::wakeDay)
                 val activity = dates.map(::activityDay)
                 val timings = dates.map(::timing)
                 fun add(metric: MetricKey, result: MetricResult) {
@@ -111,6 +122,9 @@ object RegularityWindows {
                 add(MetricKey.M10, MostActive10.compute(activity))
                 add(MetricKey.RA, RelativeAmplitude.compute(activity))
                 add(MetricKey.CFI, CircadianFunctionIndex.compute(activity))
+                add(MetricKey.IS_SLEEP, InterdailyStability.compute(wake))
+                add(MetricKey.IV_SLEEP, IntradailyVariability.compute(wake))
+                add(MetricKey.L5_ASLEEP, ProxyCheck.quietestHoursAsleep(activity, sleep))
             }
         }
         return values

@@ -11,7 +11,7 @@ import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.HarvestRunEntity
 import io.github.anbu00001.nocturne.data.NocturneDatabase
 import io.github.anbu00001.nocturne.data.ZoneChangeEntity
-import io.github.anbu00001.nocturne.data.toEntity
+import io.github.anbu00001.nocturne.data.toRawEvent
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -59,7 +59,7 @@ class Harvester(
                 val events = source.query(chunkFrom, chunkTo)
                 seen += events.size
                 inserted += db.rawEvents()
-                    .insertAll(events.map { it.toEntity(zones.offsetMinutesAt(it.timestamp)) })
+                    .insertAll(events.map { it.toRawEvent(zones.offsetMinutesAt(it.timestamp)) })
                     .count { it != -1L }
                 chunkFrom = chunkTo
             }

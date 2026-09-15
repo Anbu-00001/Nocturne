@@ -131,12 +131,50 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun schemaFourMigratesToFiveWithEveryEventIdenticalAndTheOldTableKept() = runTest {
+        val file = freshFile("migration-test-4.db")
+        val before = listOf(
+            RawEvent(1, 1_000, 330, 15, "android", ""),
+            RawEvent(2, 1_000, 330, 23, "com.example", "A"),
+            RawEvent(3, 1_000, 330, 23, "com.example", "B"),
+            RawEvent(5, 2_000, 330, 1, "com.example", "A"),
+            RawEvent(4, 3_000, 60, 12, "b", "x,y"),
+        )
+        createSchema(file, version = 4) { db ->
+            for (e in before) {
+                db.execSQL(
+                    "INSERT INTO raw_events (id, timestamp, utcOffsetMinutes, eventType, packageName, className) VALUES (?, ?, ?, ?, ?, ?)",
+                    arrayOf<Any>(e.id, e.timestamp, e.utcOffsetMinutes, e.eventType, e.packageName, e.className),
+                )
+            }
+        }
+
+        val room = open(file)
+        try {
+            fun count(table: String) = room.openHelper.readableDatabase.query("SELECT COUNT(*) FROM $table").use { it.moveToFirst(); it.getInt(0) }
+            assertEquals(before, room.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 100))
+            assertEquals(4, count("event_components"))
+            // A re-harvested event adds nothing; a new event reuses its stored names and gets an id after every stored
+            // one, so harvest order still breaks same-millisecond ties. (An ignored insert can use an id up, as on the phone.)
+            assertEquals(listOf(-1L), room.rawEvents().insertAll(listOf(before[1].copy(id = 0))))
+            val added = room.rawEvents().insertAll(listOf(RawEvent(timestamp = 4_000, utcOffsetMinutes = 330, eventType = 1, packageName = "com.example", className = "A")))
+            org.junit.Assert.assertTrue("$added", added.single() > before.maxOf { it.id })
+            assertEquals(4, count("event_components"))
+            // Schema 4's table stays for one release, untouched.
+            assertEquals(5, count(SCHEMA_FOUR_RAW_EVENTS))
+        } finally {
+            room.close()
+        }
+    }
+
     private fun freshFile(name: String): File = context.getDatabasePath(name).apply {
         parentFile?.mkdirs()
         delete()
     }
 
-    private fun open(file: File): NocturneDatabase = Room.databaseBuilder(context, NocturneDatabase::class.java, file.absolutePath).build()
+    private fun open(file: File): NocturneDatabase =
+        Room.databaseBuilder(context, NocturneDatabase::class.java, file.absolutePath).addMigrations(*NocturneDatabase.MIGRATIONS).build()
 
     private fun createSchema(file: File, version: Int, fill: (SQLiteDatabase) -> Unit) {
         val schema = JSONObject(File("$SCHEMAS/$version.json").readText()).getJSONObject("database")

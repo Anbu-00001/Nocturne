@@ -59,6 +59,18 @@ class ActivityDay(override val date: LocalDate, values: DoubleArray) : CoveredDa
             }
             return ActivityDay(date, values)
         }
+
+        /** Wakefulness from sleep estimates, 1 awake and 0 asleep, NaN where unknown: what [ProxyCheck] compares with. */
+        fun fromSleepDay(day: SleepDay): ActivityDay = ActivityDay(
+            day.date,
+            DoubleArray(SleepDay.EPOCHS) { m ->
+                when (day[m]) {
+                    SleepDay.ASLEEP -> 0.0
+                    SleepDay.AWAKE -> 1.0
+                    else -> Double.NaN
+                }
+            },
+        )
     }
 }
 
@@ -68,8 +80,9 @@ class ActivityDay(override val date: LocalDate, values: DoubleArray) : CoveredDa
  *   comparable with IV computed on 1- or 5-minute epochs.
  * - An hour counts when at least 30 of its minutes are known; a day counts when 80% of its minutes are known.
  * - IV compares only neighbouring hours that are both known, so a gap never becomes a jump.
- * - L5 and M10 come from the minute-by-minute average day, with windows that wrap around it; ties go to the
- *   earliest start counted from noon.
+ * - L5 and M10 come from the minute-by-minute average day, with windows that wrap around it. Equal means go to the
+ *   middle of the longest run of them, so an untouched night centres L5 in it (nparACT and pyActigraphy take the
+ *   first); between equally long runs, the one starting earliest from noon.
  * - At least 7 counted days.
  */
 private val ACTIVITY_REQUIREMENT = DataRequirement(minNights = 7, minCoverage = 0.8)
@@ -207,20 +220,48 @@ internal object RestActivity {
             sums[i + 1] = sums[i] + if (v.isNaN()) 0.0 else v
             counts[i + 1] = counts[i] + if (v.isNaN()) 0 else 1
         }
-        var bestMean = Double.NaN
-        var bestStart = 0
-        for (start in 0 until n) {
+        val means = DoubleArray(n) { start ->
             val known = counts[start + length] - counts[start]
-            if (known * 2 < length) continue
-            val mean = (sums[start + length] - sums[start]) / known
-            if (bestMean.isNaN() || (lowest && mean < bestMean) || (!lowest && mean > bestMean)) {
-                bestMean = mean
-                bestStart = start
-            }
+            if (known * 2 < length) Double.NaN else (sums[start + length] - sums[start]) / known
         }
-        if (bestMean.isNaN()) return MetricResult.Withheld(WithheldReason.LOW_COVERAGE, 0, (100 * requirement.minCoverage).toInt())
+        val candidates = means.filter { !it.isNaN() }
+        if (candidates.isEmpty()) return MetricResult.Withheld(WithheldReason.LOW_COVERAGE, 0, (100 * requirement.minCoverage).toInt())
+        val best = if (lowest) candidates.min() else candidates.max()
+        // A quiet stretch longer than the window, a night with the phone untouched, gives a plateau of equal means. Its
+        // middle stands for it; nparACT and pyActigraphy take the first start, which on a phone can land L5 on the
+        // edge of an afternoon that is just as quiet.
+        val bestStart = middleOfLongestRun(BooleanArray(n) { means[it] == best })
         val clockMinute = (LocalClock.NIGHT_BOUNDARY_HOUR * 60 + bestStart) % SleepDay.EPOCHS
-        return MetricResult.Score(bestMean, valid.size, knownMinutes.toDouble() / SleepDay.EPOCHS, atMinute = clockMinute)
+        return MetricResult.Score(best, valid.size, knownMinutes.toDouble() / SleepDay.EPOCHS, atMinute = clockMinute)
+    }
+
+    /**
+     * The middle of the longest circular run of true values (the earlier middle of an even run). Between runs of equal
+     * length, the one starting earliest from noon. All true gives 0.
+     */
+    fun middleOfLongestRun(flags: BooleanArray): Int {
+        val n = flags.size
+        val firstFalse = flags.indexOfFirst { !it }
+        if (firstFalse < 0) return 0
+        var bestStart = -1
+        var bestLength = 0
+        // Scanning from just after a false value, no run is split by the end of the array.
+        var k = 0
+        while (k < n) {
+            val i = (firstFalse + 1 + k) % n
+            if (!flags[i]) {
+                k++
+                continue
+            }
+            var length = 0
+            while (flags[(i + length) % n]) length++
+            if (length > bestLength || (length == bestLength && i < bestStart)) {
+                bestStart = i
+                bestLength = length
+            }
+            k += length
+        }
+        return (bestStart + (bestLength - 1) / 2) % n
     }
 }
 

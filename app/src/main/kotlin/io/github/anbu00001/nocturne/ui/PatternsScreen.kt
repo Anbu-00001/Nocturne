@@ -48,6 +48,7 @@ import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.data.ExtraStore
 import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.core.metrics.MetricKey
+import io.github.anbu00001.nocturne.core.metrics.ProxyCheck
 import io.github.anbu00001.nocturne.core.metrics.WithheldReason
 import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.LocalClock
@@ -144,6 +145,14 @@ private fun RegularitySection(regularity: Regularity?) {
         for (key in listOf(MetricKey.IS, MetricKey.IV, MetricKey.L5, MetricKey.M10, MetricKey.RA, MetricKey.CFI)) {
             byKey[key]?.let { Text(metricLine(key, it), color = if (it.value == null) muted else MaterialTheme.colorScheme.onSurface) }
         }
+        val check = byKey[MetricKey.L5_ASLEEP] ?: continue
+        Text(Tone.Patterns.SLEEP_CHECK, style = MaterialTheme.typography.labelLarge, color = muted)
+        for (key in listOf(MetricKey.L5_ASLEEP, MetricKey.IS_SLEEP, MetricKey.IV_SLEEP)) {
+            byKey[key]?.let { Text(metricLine(key, it), color = if (it.value == null) muted else MaterialTheme.colorScheme.onSurface) }
+        }
+        if (check.value?.let(ProxyCheck::followsSleep) == false) {
+            Text(Tone.Patterns.SCREEN_RHYTHM_NOT_REST, style = MaterialTheme.typography.bodySmall, color = muted)
+        }
     }
     Text(Tone.Patterns.REGULARITY_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
 }
@@ -168,6 +177,9 @@ private fun metricLine(key: MetricKey, row: WindowMetricEntity): String {
         MetricKey.M10 -> Tone.Patterns.busiest(row.atMinute?.let(::minuteText) ?: "")
         MetricKey.RA -> Tone.Patterns.amplitude("%.2f".format(value))
         MetricKey.CFI -> Tone.Patterns.functionIndex("%.2f".format(value))
+        MetricKey.IS_SLEEP -> Tone.Patterns.stabilityFromSleep("%.2f".format(value))
+        MetricKey.IV_SLEEP -> Tone.Patterns.fragmentationFromSleep("%.2f".format(value))
+        MetricKey.L5_ASLEEP -> Tone.Patterns.quietestAsleep("%.0f%%".format(100 * value))
     }
 }
 

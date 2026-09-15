@@ -100,8 +100,8 @@ class NightRecomputerTest {
         // The harvested history spans the whole fortnight.
         db.rawEvents().insertAll(
             listOf(
-                RawEventEntity(timestamp = ist("2026-09-01", "12:00"), utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
-                RawEventEntity(timestamp = ist("2026-09-14", "12:00"), utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
+                RawEvent(timestamp = ist("2026-09-01", "12:00"), utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
+                RawEvent(timestamp = ist("2026-09-14", "12:00"), utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
             ),
         )
     }

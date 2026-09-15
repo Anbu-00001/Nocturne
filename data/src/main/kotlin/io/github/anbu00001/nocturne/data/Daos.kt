@@ -4,44 +4,81 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Transaction
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
 @Dao
-interface RawEventDao {
-    /** Returns -1 for each row the natural key already holds: re-harvesting is a no-op by construction. */
+abstract class RawEventDao {
+    /**
+     * Stores events, each name pair once in event_components. Returns -1 for each event the natural key already holds:
+     * re-harvesting is a no-op by construction.
+     */
+    @Transaction
+    open suspend fun insertAll(events: List<RawEvent>): List<Long> {
+        if (events.isEmpty()) return emptyList()
+        val ids = components().associateTo(HashMap()) { (it.packageName to it.className) to it.id }
+        val rows = ArrayList<RawEventEntity>(events.size)
+        for (e in events) {
+            val key = e.packageName to e.className
+            val componentId = ids[key]
+                ?: insertComponent(EventComponentEntity(packageName = e.packageName, className = e.className)).also { ids[key] = it }
+            rows += RawEventEntity(e.id, e.timestamp, e.utcOffsetMinutes, e.eventType, componentId)
+        }
+        return insertRows(rows)
+    }
+
     @Insert(onConflict = OnConflictStrategy.IGNORE)
-    suspend fun insertAll(events: List<RawEventEntity>): List<Long>
+    protected abstract suspend fun insertRows(rows: List<RawEventEntity>): List<Long>
+
+    @Insert
+    protected abstract suspend fun insertComponent(component: EventComponentEntity): Long
+
+    @Query("SELECT * FROM event_components")
+    protected abstract suspend fun components(): List<EventComponentEntity>
 
     /** Keyset page in (timestamp, id) order; id breaks same-millisecond ties in harvest order. */
     @Query(
-        """SELECT * FROM raw_events
-           WHERE timestamp > :afterTs OR (timestamp = :afterTs AND id > :afterId)
-           ORDER BY timestamp, id LIMIT :limit""",
+        """SELECT e.id, e.timestamp, e.utcOffsetMinutes, e.eventType, c.packageName, c.className
+           FROM raw_events e JOIN event_components c ON c.id = e.componentId
+           WHERE e.timestamp > :afterTs OR (e.timestamp = :afterTs AND e.id > :afterId)
+           ORDER BY e.timestamp, e.id LIMIT :limit""",
     )
-    suspend fun pageAfter(afterTs: Long, afterId: Long, limit: Int): List<RawEventEntity>
+    abstract suspend fun pageAfter(afterTs: Long, afterId: Long, limit: Int): List<RawEvent>
 
     @Query("SELECT MAX(timestamp) FROM raw_events WHERE eventType IN (:types) AND timestamp < :beforeTs")
-    suspend fun lastOfTypesBefore(types: List<Int>, beforeTs: Long): Long?
+    abstract suspend fun lastOfTypesBefore(types: List<Int>, beforeTs: Long): Long?
 
     @Query("SELECT EXISTS(SELECT 1 FROM raw_events WHERE eventType = :type AND timestamp >= :sinceTs)")
-    suspend fun anySince(type: Int, sinceTs: Long): Boolean
+    abstract suspend fun anySince(type: Int, sinceTs: Long): Boolean
 
     @Query("SELECT MIN(timestamp) FROM raw_events")
-    suspend fun firstTimestamp(): Long?
+    abstract suspend fun firstTimestamp(): Long?
 
     @Query("SELECT MAX(timestamp) FROM raw_events")
-    suspend fun lastTimestamp(): Long?
+    abstract suspend fun lastTimestamp(): Long?
 
     @Query("SELECT COUNT(*) FROM raw_events")
-    fun observeCount(): Flow<Long>
+    abstract fun observeCount(): Flow<Long>
 
     @Query("SELECT COUNT(*) FROM raw_events")
-    suspend fun count(): Long
+    abstract suspend fun count(): Long
 
-    /** Only for the user's explicit "delete all data". */
+    /**
+     * Only for the user's explicit "delete all data". While schema 4's copy (raw_events_v4, see MIGRATION_4_5) is still
+     * kept, that must be dropped too, through the open helper: it is outside Room's entities.
+     */
+    @Transaction
+    open suspend fun deleteAll() {
+        deleteRows()
+        deleteComponents()
+    }
+
     @Query("DELETE FROM raw_events")
-    suspend fun deleteAll()
+    protected abstract suspend fun deleteRows()
+
+    @Query("DELETE FROM event_components")
+    protected abstract suspend fun deleteComponents()
 }
 
 data class NightTotals(

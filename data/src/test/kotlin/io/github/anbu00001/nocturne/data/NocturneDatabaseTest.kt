@@ -34,8 +34,8 @@ class NocturneDatabaseTest {
     @Test
     fun reinsertingTheSameEventsAddsNothing() = runTest {
         val rows = listOf(
-            RawEventEntity(timestamp = 1_000, utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
-            RawEventEntity(
+            RawEvent(timestamp = 1_000, utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
+            RawEvent(
                 timestamp = 1_500, utcOffsetMinutes = 330, eventType = 1,
                 packageName = "com.whatsapp", className = "com.whatsapp.Main",
             ),
@@ -47,7 +47,7 @@ class NocturneDatabaseTest {
 
     @Test
     fun twoActivitiesOfOneAppInTheSameMillisecondAreBothKept() = runTest {
-        val a = RawEventEntity(timestamp = 2_000, utcOffsetMinutes = 0, eventType = 23, packageName = "com.example", className = "A")
+        val a = RawEvent(timestamp = 2_000, utcOffsetMinutes = 0, eventType = 23, packageName = "com.example", className = "A")
         db.rawEvents().insertAll(listOf(a, a.copy(className = "B")))
         assertEquals(2L, db.rawEvents().count())
     }
@@ -94,8 +94,8 @@ class NocturneDatabaseTest {
     fun csvExportWritesEveryRowInOrderAndQuotesWhenNeeded() = runTest {
         db.rawEvents().insertAll(
             listOf(
-                RawEventEntity(timestamp = 20, utcOffsetMinutes = 330, eventType = 1, packageName = "b", className = "x,y"),
-                RawEventEntity(timestamp = 10, utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
+                RawEvent(timestamp = 20, utcOffsetMinutes = 330, eventType = 1, packageName = "b", className = "x,y"),
+                RawEvent(timestamp = 10, utcOffsetMinutes = 330, eventType = 15, packageName = "android"),
             ),
         )
         val out = StringBuilder()
@@ -104,6 +104,24 @@ class NocturneDatabaseTest {
         assertEquals("id,timestamp_utc_ms,utc_offset_minutes,event_type,package_name,class_name", lines[0])
         assertEquals("2,10,330,15,android,", lines[1])
         assertEquals("1,20,330,1,b,\"x,y\"", lines[2])
+    }
+
+    @Test
+    fun namesAreStoredOnceComeBackExactlyAndGoWithDeleteAll() = runTest {
+        fun names() = db.openHelper.readableDatabase.query("SELECT COUNT(*) FROM event_components").use { it.moveToFirst(); it.getInt(0) }
+        val chat = RawEvent(timestamp = 1_000, utcOffsetMinutes = 330, eventType = 1, packageName = "com.whatsapp", className = "com.whatsapp.Main")
+        db.rawEvents().insertAll(listOf(chat, chat.copy(timestamp = 2_000), RawEvent(timestamp = 1_500, utcOffsetMinutes = 330, eventType = 17, packageName = "android")))
+        db.rawEvents().insertAll(listOf(chat.copy(timestamp = 3_000, className = "")))
+
+        val page = db.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 10)
+        assertEquals(listOf(1_000L, 1_500L, 2_000L, 3_000L), page.map { it.timestamp })
+        assertEquals(listOf("com.whatsapp", "android", "com.whatsapp", "com.whatsapp"), page.map { it.packageName })
+        assertEquals(listOf("com.whatsapp.Main", "", "com.whatsapp.Main", ""), page.map { it.className })
+        assertEquals(3, names())
+
+        db.rawEvents().deleteAll()
+        assertEquals(0L, db.rawEvents().count())
+        assertEquals(0, names())
     }
 
     private fun session(

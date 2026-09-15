@@ -225,6 +225,13 @@ object Tone {
         fun amplitude(value: String) = "Relative amplitude (RA): $value of 1"
         fun functionIndex(value: String) = "Circadian function index: $value of 1"
 
+        const val SLEEP_CHECK = "Screen rhythm beside the sleep estimates"
+        fun quietestAsleep(percent: String) = "Asleep for $percent of the quietest 5 hours"
+        fun stabilityFromSleep(value: String) = "Stability (IS) from sleep times alone: $value of 1"
+        fun fragmentationFromSleep(value: String) = "Fragmentation (IV) from sleep times alone: $value"
+        const val SCREEN_RHYTHM_NOT_REST =
+            "The quietest screen hours were mostly awake time in this window, so the screen-use figures describe phone habits more than rest."
+
         fun metricName(key: MetricKey): String = when (key) {
             MetricKey.SRI -> "The Sleep Regularity Index"
             MetricKey.ONSET_SD -> "Sleep onset spread"
@@ -236,12 +243,15 @@ object Tone {
             MetricKey.M10 -> "The busiest 10 hours"
             MetricKey.RA -> "Relative amplitude"
             MetricKey.CFI -> "The circadian function index"
+            MetricKey.IS_SLEEP -> "Stability from sleep times"
+            MetricKey.IV_SLEEP -> "Fragmentation from sleep times"
+            MetricKey.L5_ASLEEP -> "The sleep check"
         }
         fun needsNights(name: String, have: Int, need: Int) = "$name needs $need recorded nights in this window; $have so far"
         fun needsPairs(name: String, have: Int, need: Int) = "$name needs $need back-to-back pairs of nights; $have so far"
         fun needsCoverage(name: String, have: Int, need: Int) = "$name needs $need% of the window recorded; $have% so far"
         fun needsDayTypes(name: String) = "$name needs both free nights and work nights in the window"
-        fun noVariation(name: String) = "$name is undefined while screen use does not vary"
+        fun noVariation(name: String) = "$name is undefined while nothing in the window varies"
     }
 
     object Settings {

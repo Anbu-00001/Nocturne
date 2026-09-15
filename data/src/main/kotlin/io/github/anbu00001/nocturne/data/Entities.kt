@@ -11,17 +11,19 @@ import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.EveningWindow
 
 /**
- * Append-only and sacred (spec §5): every other table is rebuilt from this one.
+ * Append-only and sacred (spec §5): every other table is rebuilt from this one. Read and write it through
+ * [RawEventDao] as [RawEvent], which carries the names.
  *
- * The natural key adds className to the spec's (timestamp, packageName, eventType), and both text
- * columns are non-null. SQLite treats NULLs as distinct inside a UNIQUE index, so a nullable key
- * column would let INSERT OR IGNORE re-insert those rows on every overlapping harvest.
+ * The natural key is the spec's (timestamp, packageName, eventType) plus className, with the two names interned in
+ * [EventComponentEntity] since schema 5 (analytics 2.7): on the phone's real history that took an event with its index
+ * from about 128 bytes to 42, and nothing is lost. Names are never null: SQLite treats NULLs as distinct inside a
+ * UNIQUE index, so a nullable key would let INSERT OR IGNORE re-insert those rows on every overlapping harvest.
  * The unique index leads with timestamp and so also serves range scans; a separate timestamp
  * index would only cost space.
  */
 @Entity(
     tableName = "raw_events",
-    indices = [Index(value = ["timestamp", "eventType", "packageName", "className"], unique = true)],
+    indices = [Index(value = ["timestamp", "eventType", "componentId"], unique = true)],
 )
 data class RawEventEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -30,7 +32,31 @@ data class RawEventEntity(
     /** Offset in force at the event's own instant, never the offset at harvest or read time. */
     val utcOffsetMinutes: Int,
     val eventType: Int,
+    /** [EventComponentEntity.id]; a component is never deleted while an event names it. */
+    val componentId: Long,
+)
+
+/** Each (package, class) pair an event has named, stored once. */
+@Entity(
+    tableName = "event_components",
+    indices = [Index(value = ["packageName", "className"], unique = true)],
+)
+data class EventComponentEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
     /** "android" for SCREEN_* and KEYGUARD_* events (observed on device; the spec expected null). */
+    val packageName: String,
+    /** Empty when the event names no class. */
+    val className: String,
+)
+
+/** A raw event with its names, as harvested and as read back. */
+data class RawEvent(
+    val id: Long = 0,
+    /** Epoch millis, UTC. */
+    val timestamp: Long,
+    /** Offset in force at the event's own instant, never the offset at harvest or read time. */
+    val utcOffsetMinutes: Int,
+    val eventType: Int,
     val packageName: String,
     val className: String = "",
 )

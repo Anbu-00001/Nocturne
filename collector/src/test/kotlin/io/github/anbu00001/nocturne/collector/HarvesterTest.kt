@@ -12,7 +12,7 @@ import io.github.anbu00001.nocturne.data.DerivedTables
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.NocturneDatabase
 import io.github.anbu00001.nocturne.data.PowerSampleEntity
-import io.github.anbu00001.nocturne.data.toEntity
+import io.github.anbu00001.nocturne.data.toRawEvent
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -131,7 +131,7 @@ class HarvesterTest {
 
     @Test
     fun rowsLeftByARunThatDiedHalfwayStillGetSessions() = runTest {
-        db.rawEvents().insertAll(EVENTS.map { it.toEntity(utcOffsetMinutes = 330) })
+        db.rawEvents().insertAll(EVENTS.map { it.toRawEvent(utcOffsetMinutes = 330) })
         clock = at(2_000)
         val result = harvester.harvest()
         assertEquals(0, result.eventsInserted)
