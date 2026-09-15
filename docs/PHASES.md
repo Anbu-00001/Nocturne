@@ -9,10 +9,10 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 | 1b | Multi-module Gradle, Android-import guard on `:core-model`, `:tone` with a copy audit test | no | done |
 | 1c | Room schema v1, idempotent raw_events, recompute, CSV export, DST/travel query tests | no (Robolectric) | done |
 | 1d | Harvester worker, boot/timezone receiver, onboarding, Last night, Patterns, Settings/health | 📱 verify | installed on the A18 2026-09-14 |
-| 1e | 7-day harvester soak with no gaps (the gate before Phase 2b) | 📱📱 | running since 2026-09-14 |
+| 1e | 7-day harvester soak with no gaps (the gate before Phase 2b) | 📱📱 | running since 2026-09-14 19:17, passes 2026-09-21 19:17 |
 | 2a | Light dose (§6.1), Giménez suppression (§6.2), sleep inference (§6.3) in `:core-model` | no | done, replayed on 10 real nights |
 | 2a+ | Sleep in the existing app: schema 2, nights table, personalised evening window, "I slept about X to Y" entry, sleep chart. No foreground service. | 📱 verify | installed on the A18 2026-09-15 |
-| 2b | Light sampler service (`specialUse`), Tonight screen, light samples feeding §6.1/§6.2 | 📱 | after 1e passes |
+| 2b | Light sampler service (`specialUse`), Tonight screen, light samples feeding §6.1/§6.2 | 📱 | built and tested on the laptop 2026-09-15; install after 1e passes |
 | 2c | Sleep inference against 14 hand-labelled nights, ≥80% of onsets within 30 min | 📱 | 5 of 14 nights labelled, all 5 within 30 min |
 | 3a | μEMA reflection cards, focus timer with interruption count | 📱 | |
 | 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | |
@@ -24,7 +24,7 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 - JDK 17, Android SDK Platform **37.2** (Compose BOM 2026.09, current AndroidX and Vico 3.3 require compiling against API 37; `targetSdk` stays 36), Build Tools 36+.
 - AGP 9.4.0 with built-in Kotlin 2.4.20, Gradle 9.6.0 via the wrapper, KSP 2.3.12, Room 2.8.5.
 - `./gradlew :core-model:test :tone:test :data:testDebugUnitTest :collector:testDebugUnitTest` runs every test on the laptop.
-- `./gradlew :app:installDebug` installs on a USB-connected phone.
+- `./gradlew :app:assembleDebug` builds the APK without installing it; `./gradlew :app:installDebug` installs on a USB-connected phone.
 
 Developer tools that read personal data. Keep every export and database copy out of the repository.
 
@@ -52,6 +52,19 @@ Developer tools that read personal data. Keep every export and database copy out
 - You confirmed the estimates for five nights, Wed 9 to Sun 13 Sept (01:59 to 10:48, 03:09 to 12:23, 03:58 to 13:00, 03:10 to 12:36, 04:09 to 13:00). Replayed against them, onset and wake are within 30 min on 5 of 5 (all exact), plain and leave-one-out. The late wakes are your real times, not a model bias.
 - Sleep estimates for the 9 complete nights match the laptop replay exactly. Only 5 reach confidence 0.4, so the evening window stays provisional until 7 nights count. Two confirmed nights sit below 0.4: Wed 9 (0.38, a rival onset at 00:42) and Fri 11 (0.01, a near tie between waking at 13:00 and 14:02). Entering those two as your times makes 7, and the window becomes personal.
 - Confidence under-rates those two correct nights, but with no wrong night yet there is nothing to calibrate it against, so it is unchanged.
+- The five nights above are the only record of those labels: the laptop's reboot on 15 Sept cleared the local label file, CSV export and database backups.
+
+## Phase 2b build (laptop only, 2026-09-15)
+
+Not installed. A running light service keeps Nocturne's process alive, which would hide exactly the ColorOS kills the 1e soak is testing for.
+
+- Light measurement stays off until you turn it on (Tonight or Settings). Then the service reads the light sensor only while the screen is on and writes one sample per 30 s window: time-weighted median lux, the brightness setting, dark mode and the warm filter.
+- It is started by opening the app, by each harvester run, at boot and after an app update. A start Android refuses is shown in Settings.
+- Nights with light samples get a modelled suppression band from the evening window's start to sleep onset, with how many screen-on minutes a sample covered. Nights from before the service ran stay unmodelled rather than counted as dark.
+- New Tonight tab: time to the evening window, light at the eyes now against the 10 lux line, glances so far, suppression so far.
+- Schema 3 only adds columns (5 on light_samples, 3 on nights). Its migration ran on a copy of the phone database pulled at 06:30: 19,146 raw events before and after, 959 sessions, every night recomputed.
+- Tests: core-model 92, tone 6, data 14, collector 10, all passing (2 personal-data replays skipped); the debug APK builds.
+- Soak so far: 31 harvest runs by 06:30 on 15 Sept, 30 of them OK, longest gap 5.4 h overnight while the phone was idle. The OS keeps 10 days of events, so a gap that size loses nothing.
 
 ## Phone checks for 1d and 1e
 
@@ -68,6 +81,17 @@ Developer tools that read personal data. Keep every export and database copy out
 2. For nights you remember, tap "Correct these times" and enter when you fell asleep and woke. After three such nights the others shift by your typical gap (corrective offsets).
 3. Patterns shows one sleep bar per night; entered nights are solid, estimates lighter.
 4. 2c passes when at least 80% of 14 labelled nights have an estimated onset within 30 min of your times, scored leave-one-out.
+
+## Phone checks for 2b (after 1e passes)
+
+1. Before installing, pull a fresh copy of the database and run `LiveDatabaseTest` again for schema 3.
+2. Install, open Tonight, tap "Start measuring light". Settings shows the sampler running and, within a minute of the screen coming on, a last sample time.
+3. `adb shell dumpsys sensorservice` lists Nocturne as a light sensor client while the screen is on, and not after screen-off.
+4. Settings reads the warm filter as on between 22:00 and 07:00 and off by day. By day, `adb shell settings get system oplus_customize_eye_protect_enable` should still say 1: that means the flag is "scheduled", as the code assumes.
+5. Cover the sensor with a finger: the next sample's lux drops. In a dark room at minimum brightness expect about 0 lux (the stk33c01 read 0.00 at 02:44 with the screen at setting 13).
+6. Overnight with the screen off, the service survives until morning, or Settings shows when a start was refused. Last night's coverage line shows how many screen-on minutes were measured.
+7. Battery over 48 h: Nocturne stays within the spec's 2% target (Settings, Battery usage).
+8. With notification permission denied, the service still runs and appears under active apps.
 
 ## Where the build departs from the spec, and why
 
@@ -102,11 +126,23 @@ Phase 2:
 - **Classifier 3.** The clock's "upcoming alarm" notification lights the screen for 10 s, 15 min before each alarm; it is now an alarm wake, not a glance. ColorOS usually logs a waking notification after `SCREEN_INTERACTIVE` (134 of 232 notification wakes within 0 to 1 s after), so that counts too.
 - **Schema 2 is additive**, so Room's AutoMigration covers it, verified against schema 1's exported JSON and a copy of the phone's database. `sleep_reports` and `power_samples` are primary data and survive every recompute.
 
+Phase 2b:
+
+- **Off by default.** §4.2 calls the light service optional, so nothing starts until you turn it on.
+- **Room light with the screen off is an assumption, not a reading.** §4.2 samples only while the screen is on. The low end assumes dark at once, the middle keeps the last reading for 30 min, the high end keeps it (or the evening prior) until sleep onset. Each bound of the suppression band now picks its own exposed minutes, so light only the high end assumes still raises the high bound; before, a minute counted only if the middle estimate cleared 1 lux.
+- **Samples are time-weighted medians.** `TYPE_LIGHT` is on-change: a steady room may send nothing, so the value in force carries into each window, and a burst of events cannot outvote the rest. (On the A18 it reports every 200 ms while auto brightness listens.)
+- **The foreground app is not stored with each sample.** Sessions already know it exactly from raw_events.
+- **The raw brightness setting is stored**, not only the 0 to 1 value, so a corrected display profile can re-read history.
+- **The warm filter is read from ColorOS's own settings** (`oplus_customize_eye_protect_enable` with its 22:00 to 07:00 schedule). Keys Android itself does not define stay readable to apps (AOSP SettingsProvider), AOSP Night Light is tried as a fallback, and an unreadable value widens the band instead of being guessed.
+- **Service starts follow Android's background rules.** Android 15 still lets `specialUse` start from BOOT_COMPLETED (only camera, dataSync, mediaPlayback, mediaProjection, microphone and phoneCall are barred); the harvester's runs rely on the battery-optimisation exemption; a refused start is recorded, never thrown.
+- **Notification permission is optional.** Since Android 13 a foreground service runs without it and is listed under active apps instead of in the notification shade.
+
 ## Device facts that matter later
 
-- Hardware light sensor `stk33c01` (TYPE_LIGHT), so §6.1 ambient light is available.
-- Brightness setting runs 0 to 4095 (the slider stops at 3276 without high brightness mode), linear onto 2 to 490 nits. Auto brightness is on and ColorOS writes its value to the setting (140 at night, 566 by day).
+- Hardware light sensor `stk33c01` (TYPE_LIGHT, on-change), so §6.1 ambient light is available. While auto brightness listens it reports every 200 ms; at 02:44 with the screen at minimum brightness it read 0.00 lux.
+- Brightness setting runs 0 to 4095 (the slider stops at 3276 without high brightness mode), linear onto 2 to 490 nits. Auto brightness is on and ColorOS writes its applied value to the setting (13 at 02:44, 140 at night, 566 by day).
 - Dark mode is on and ColorOS eye comfort runs at 2700 K from 22:00 to 07:00. At the night setting the screen's modelled mEDI stays under 1 lux even at the high end of the band, so for this phone room light, not the screen, is likely the larger evening contributor. That makes the 2b light sampler worth more than the screen model.
 - Screen-off timeout is 30 minutes (`last_manual_screen_off_timeout` says 1 minute was once set). Only the current value is readable, and it is applied to all history.
 - Double-tap to wake is on, which likely explains many 1 s lock-screen wakes with no notification (178 in 10 days).
 - On a fingerprint wake, ColorOS logs the last app's `ACTIVITY_RESUMED` before `KEYGUARD_HIDDEN`.
+- Nocturne is exempt from battery optimisation (standby bucket 5, on the device idle whitelist) and does not hold notification permission.

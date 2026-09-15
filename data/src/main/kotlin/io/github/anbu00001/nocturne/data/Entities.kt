@@ -35,17 +35,30 @@ data class RawEventEntity(
     val className: String = "",
 )
 
-/** Phase 2b: written by the light service. */
+/**
+ * Written by the light service (spec §4.2), one row per 30 s window with the screen on. Recorded, not derived:
+ * what the sensor and the display showed cannot be rebuilt later. The foreground app stays null, because
+ * sessions already know it exactly from raw_events.
+ */
 @Entity(tableName = "light_samples", indices = [Index("timestamp")])
 data class LightSampleEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** Start of the window. */
     val timestamp: Long,
-    /** Null when the sensor was unavailable. */
+    /** Median over the window; null when the sensor sent nothing. */
     val ambientLux: Float?,
     /** 0..1, normalised against the device's real maximum. */
     val screenBrightness: Float?,
     val screenOn: Boolean,
     val foregroundPackage: String?,
+    /** Schema 3. Shorter than 30 s when the screen went off inside the window. */
+    @ColumnInfo(defaultValue = "30000") val durationMs: Long = 30_000,
+    /** Schema 3. Settings.System.SCREEN_BRIGHTNESS as stored, so a corrected display profile can re-read history. */
+    val brightnessSetting: Int? = null,
+    val darkUi: Boolean? = null,
+    /** Null when the ROM does not expose its warm filter. */
+    val warmFilter: Boolean? = null,
+    @ColumnInfo(defaultValue = "0") val sensorEvents: Int = 0,
 )
 
 /** Derived and rebuildable. Keyed by the wake time, which is unique because raw_events is. */
@@ -120,6 +133,11 @@ data class NightEntity(
     @ColumnInfo(defaultValue = "0") val windowPersonalised: Boolean = false,
     /** Nights the personalised window rests on; 0 while provisional. */
     @ColumnInfo(defaultValue = "0") val windowNights: Int = 0,
+    /** Schema 3. Minutes of the light interval with the screen on, and how many of those a light sample covered. */
+    @ColumnInfo(defaultValue = "0") val lightScreenMinutes: Int = 0,
+    @ColumnInfo(defaultValue = "0") val lightMeasuredMinutes: Int = 0,
+    /** The modelled exposure ran outside the 30 min to 4 h Giménez fitted, so the nearest limit was used. */
+    @ColumnInfo(defaultValue = "0") val suppressionDurationClamped: Boolean = false,
 )
 
 /** "I slept about X to Y" (spec §6.3). User data: kept through every recompute, removed only by the user. */

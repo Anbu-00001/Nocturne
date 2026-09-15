@@ -12,20 +12,24 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import io.github.anbu00001.nocturne.data.HarvestOutcome
+import io.github.anbu00001.nocturne.data.NocturneDatabase
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import java.util.concurrent.TimeUnit
 
-/** Implemented by the Application so workers and receivers can reach the one Harvester. */
+/** Implemented by the Application so workers, receivers and the light service reach the one database and Harvester. */
 interface CollectorHost {
+    val database: NocturneDatabase
     val harvester: Harvester
 }
 
 class HarvestWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
         val result = (applicationContext as CollectorHost).harvester.harvest()
+        // Each run is also a chance to restart the light sampler if ColorOS stopped it (spec §11 pitfall 10).
+        LightService.ensureRunning(applicationContext)
         return if (result.outcome == HarvestOutcome.FAILED) Result.retry() else Result.success()
     }
 }
@@ -55,13 +59,16 @@ object HarvestScheduler {
 
 /**
  * WorkManager already re-arms periodic work after reboot; re-enqueueing here is belt and braces for
- * ROMs that block its own receiver. Nothing here starts a foreground service (Android 15 forbids
- * dataSync services from BOOT_COMPLETED).
+ * ROMs that block its own receiver. The light sampler is a `specialUse` service, which Android 15 still
+ * lets BOOT_COMPLETED start (a `dataSync` one it would not).
  */
 class SystemEventReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         when (intent.action) {
-            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> HarvestScheduler.ensureScheduled(context)
+            Intent.ACTION_BOOT_COMPLETED, Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                HarvestScheduler.ensureScheduled(context)
+                LightService.ensureRunning(context)
+            }
             Intent.ACTION_TIMEZONE_CHANGED -> {
                 val zoneId = intent.getStringExtra(Intent.EXTRA_TIMEZONE) ?: return
                 val harvester = (context.applicationContext as CollectorHost).harvester

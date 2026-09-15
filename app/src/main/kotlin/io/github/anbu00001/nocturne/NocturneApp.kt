@@ -18,13 +18,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
-/** Manual DI: one database, one harvester, shared by the UI, the worker and the receivers. */
+/** Manual DI: one database, one harvester, shared by the UI, the worker, the receivers and the light service. */
 class NocturneApp : Application(), CollectorHost {
 
     /** Outlives any screen, so a harvest or export started from the UI finishes if the user leaves. */
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    val database: NocturneDatabase by lazy { NocturneDatabase.open(this) }
+    override val database: NocturneDatabase by lazy { NocturneDatabase.open(this) }
     val labels: AppLabels by lazy { AppLabels(this) }
     val deviceProfile by lazy { DeviceProfile(this) }
 
@@ -32,7 +32,7 @@ class NocturneApp : Application(), CollectorHost {
         Harvester(
             db = database,
             source = AndroidUsageEventSource(this),
-            derived = DerivedTables(database),
+            derived = DerivedTables(database, deviceProfile.displayProfile()),
             configFor = { keyguardSeen -> deviceProfile.classifierConfig(keyguardSeen) },
             sleepConfig = { deviceProfile.sleepConfig() },
             power = AndroidPowerSource(this),

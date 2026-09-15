@@ -35,9 +35,67 @@ object Tone {
     fun clockRange(from: String, to: String) = "$from to $to"
 
     object Nav {
+        const val TONIGHT = "Tonight"
         const val LAST_NIGHT = "Last night"
         const val PATTERNS = "Patterns"
         const val SETTINGS = "Settings"
+    }
+
+    object Tonight {
+        fun windowStartsIn(time: String, wait: String) = "Evening window starts at $time, in $wait"
+        fun windowOpen(since: String, until: String) = "In the evening window since $since, until $until"
+        fun atEyes(mid: String) = "About $mid lux melanopic at your eyes now"
+        fun range(low: String, high: String) = "Modelled range $low to $high lux"
+        const val UNDER_TARGET = "Under the evening target of 10 lux"
+        const val OVER_TARGET = "Above the evening target of 10 lux"
+        const val SPANS_TARGET = "The range spans the evening target of 10 lux"
+        const val MEASURED = "Room light from the sensor in the last minute; screen light from brightness and display mode."
+        const val NOT_MEASURED = "Room light is not being measured, so it uses a wide evening prior; screen light is from brightness and display mode."
+        const val CHART_NOTE = "Log scale from 0.1 to 1000 lux. The bar is the modelled range, the line marks 10 lux."
+        fun glances(count: Int) = if (count == 1) "1 glance so far tonight" else "$count glances so far tonight"
+        const val GLANCES_PENDING = "Glances appear after the next harvest."
+        fun suppression(mid: String, low: String, high: String) = "Modelled melatonin suppression so far: $mid% (range $low to $high%)"
+        const val SUPPRESSION_PENDING = "Suppression so far appears after the next harvest, once light has been measured this evening."
+        const val LIGHT_OFF = "Light measurement is off, so this evening's suppression is not modelled."
+        const val MODELLED_NOTE =
+            "Light and melatonin numbers are modelled from assumptions about viewing distance, screen content and the room. " +
+                "Sensitivity to evening light differs several-fold between people."
+    }
+
+    object Light {
+        const val CHANNEL_NAME = "Light measurement"
+        const val CHANNEL_DESCRIPTION = "Shown while Nocturne can read the light sensor with the screen on."
+        const val NOTIFICATION_TITLE = "Measuring light"
+        const val NOTIFICATION_TEXT = "Reads the light sensor only while the screen is on."
+
+        const val SECTION = "Light"
+        const val START = "Start measuring light"
+        const val STOP = "Stop measuring light"
+        const val ENABLED = "Light measurement is on"
+        const val DISABLED = "Light measurement is off. Usage is recorded either way."
+        fun sampler(running: Boolean) = if (running) "Sampler: running" else "Sampler: not running"
+        fun lastSample(time: String, count: Int) = "Last sample $time, $count samples in the last 24 h"
+        const val NO_SAMPLES = "No light samples yet."
+        fun refused(time: String, reason: String) = "Android refused a background start at $time ($reason). Opening Nocturne starts it."
+        fun sensor(name: String, step: String, max: String) = "Sensor: $name, steps of $step lux, up to $max lux"
+        const val NO_SENSOR = "No light sensor reported, so room light uses the evening prior."
+        fun display(profile: String, minNits: String, peakNits: String) = "Screen model: $profile, $minNits to $peakNits nits"
+        const val PROFILE_A18 = "Oppo A18, read from its display config"
+        const val PROFILE_GENERIC = "generic, uncalibrated"
+        fun warmFilter(state: String) = "Warm display filter now: $state"
+        const val STATE_ON = "on"
+        const val STATE_OFF = "off"
+        const val STATE_UNREADABLE = "not readable"
+        const val NOTIFICATION_PERMISSION = "Notification permission"
+        const val ALLOW_NOTIFICATION = "Show the sampler's notification"
+        const val NOTIFICATION_NOTE =
+            "Optional. Without it the sampler still runs; Android lists it under active apps instead of in the notification shade."
+
+        fun nightSuppression(mid: String, low: String, high: String) =
+            "Modelled melatonin suppression before sleep: $mid% (range $low to $high%)"
+        fun coverage(measured: Int, screen: Int) = "Light measured for $measured of $screen minutes with the screen on"
+        const val DURATION_CLAMPED =
+            "The exposure fell outside the 30 min to 4 h the suppression model was fitted on, so the nearest limit was used."
     }
 
     object Onboarding {
@@ -178,8 +236,9 @@ object Tone {
         const val WIPE = "Delete all data"
         const val WIPE_TITLE = "Delete all data?"
         const val WIPE_BODY =
-            "This removes every harvested event, derived session and night, and any sleep times you entered, from this " +
-                "phone. Android still holds roughly the last 10 days, and the next harvest copies those back."
+            "This removes every harvested event, light sample, derived session and night, and any sleep times you entered, " +
+                "from this phone. Android still holds roughly the last 10 days of events, and the next harvest copies those " +
+                "back. Light samples cannot be recovered."
         const val CANCEL = "Cancel"
         const val DELETE = "Delete"
     }

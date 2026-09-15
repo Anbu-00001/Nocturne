@@ -23,6 +23,7 @@ kotlin {
 
 dependencies {
     api(project(":data"))
+    implementation(project(":tone"))
     api(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.core.ktx)
     implementation(libs.kotlinx.coroutines.android)

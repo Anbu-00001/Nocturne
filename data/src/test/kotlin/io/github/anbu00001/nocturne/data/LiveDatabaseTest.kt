@@ -53,7 +53,8 @@ class LiveDatabaseTest {
             val nights = room.sleep().nights()
             File("build/live-database.txt").writeText(
                 buildString {
-                    appendLine("schema $versionBefore -> 2, raw events $rawBefore before and ${room.rawEvents().count()} after, sessions $sessions")
+                    val versionAfter = room.openHelper.readableDatabase.version
+                    appendLine("schema $versionBefore -> $versionAfter, raw events $rawBefore before and ${room.rawEvents().count()} after, sessions $sessions")
                     nights.forEach { appendLine(it.toString()) }
                 },
             )

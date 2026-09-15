@@ -81,6 +81,9 @@ interface SessionDao {
     @Query("SELECT * FROM sessions WHERE nightDate = :nightDate ORDER BY startTs")
     fun observeNight(nightDate: String): Flow<List<SessionEntity>>
 
+    @Query("SELECT * FROM sessions WHERE nightDate = :nightDate ORDER BY startTs")
+    suspend fun forNight(nightDate: String): List<SessionEntity>
+
     @Query("SELECT DISTINCT nightDate FROM sessions ORDER BY nightDate DESC")
     fun observeNightDates(): Flow<List<String>>
 
@@ -180,6 +183,29 @@ interface SleepDao {
 
     @Query("SELECT * FROM power_samples WHERE timestamp >= :fromTs ORDER BY timestamp")
     suspend fun powerSamplesFrom(fromTs: Long): List<PowerSampleEntity>
+}
+
+@Dao
+interface LightDao {
+    @Insert
+    suspend fun insert(sample: LightSampleEntity)
+
+    /** Samples overlapping [fromTs, toTs). A sample lasts at most 30 s, so the index bound a minute early is safe. */
+    @Query(
+        """SELECT * FROM light_samples
+           WHERE timestamp >= :fromTs - 60000 AND timestamp < :toTs AND timestamp + durationMs > :fromTs
+           ORDER BY timestamp""",
+    )
+    suspend fun overlapping(fromTs: Long, toTs: Long): List<LightSampleEntity>
+
+    @Query("SELECT timestamp + durationMs FROM light_samples ORDER BY timestamp DESC LIMIT 1")
+    suspend fun lastEnd(): Long?
+
+    @Query("SELECT * FROM light_samples ORDER BY timestamp DESC LIMIT 1")
+    fun observeLatest(): Flow<LightSampleEntity?>
+
+    @Query("SELECT COUNT(*) FROM light_samples WHERE timestamp >= :sinceTs")
+    fun observeCountSince(sinceTs: Long): Flow<Int>
 }
 
 @Dao

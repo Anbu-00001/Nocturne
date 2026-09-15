@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import io.github.anbu00001.nocturne.collector.LightService
 import io.github.anbu00001.nocturne.tone.Tone
 import io.github.anbu00001.nocturne.ui.LastNightScreen
 import io.github.anbu00001.nocturne.ui.NocturneTheme
@@ -30,6 +31,7 @@ import io.github.anbu00001.nocturne.ui.OnboardingScreen
 import io.github.anbu00001.nocturne.ui.PatternsScreen
 import io.github.anbu00001.nocturne.ui.SettingsScreen
 import io.github.anbu00001.nocturne.ui.SystemAccess
+import io.github.anbu00001.nocturne.ui.TonightScreen
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,6 +61,8 @@ private fun NocturneRoot(app: NocturneApp) {
         usageAccess = SystemAccess.hasUsageAccess(context)
         batteryExempt = SystemAccess.isIgnoringBatteryOptimizations(context)
         if (usageAccess) app.harvestNow()
+        // An app in the foreground may always start a foreground service: the light sampler's surest restart.
+        LightService.ensureRunning(context)
         onPauseOrDispose { }
     }
 
@@ -80,7 +84,7 @@ private fun NocturneRoot(app: NocturneApp) {
 @Composable
 private fun MainTabs(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolean) {
     var tab by rememberSaveable { mutableIntStateOf(0) }
-    val titles = listOf(Tone.Nav.LAST_NIGHT, Tone.Nav.PATTERNS, Tone.Nav.SETTINGS)
+    val titles = listOf(Tone.Nav.TONIGHT, Tone.Nav.LAST_NIGHT, Tone.Nav.PATTERNS, Tone.Nav.SETTINGS)
     Scaffold(
         topBar = {
             PrimaryTabRow(selectedTabIndex = tab, modifier = Modifier.statusBarsPadding()) {
@@ -92,8 +96,9 @@ private fun MainTabs(app: NocturneApp, usageAccess: Boolean, batteryExempt: Bool
     ) { padding ->
         Box(Modifier.padding(padding)) {
             when (tab) {
-                0 -> LastNightScreen(app)
-                1 -> PatternsScreen(app)
+                0 -> TonightScreen(app)
+                1 -> LastNightScreen(app)
+                2 -> PatternsScreen(app)
                 else -> SettingsScreen(app, usageAccess, batteryExempt)
             }
         }

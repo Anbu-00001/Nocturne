@@ -4,6 +4,9 @@
 
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!-- Optional: only shows the light sampler's notification. The service runs without it (Android 13+). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- No network in Phases 1-3 (spec §8): stripped even if a library asks for it. -->
     <uses-permission
         android:name="android.permission.INTERNET"

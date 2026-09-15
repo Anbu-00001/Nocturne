@@ -2,6 +2,12 @@ package io.github.anbu00001.nocturne.data
 
 import androidx.room.withTransaction
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
+import io.github.anbu00001.nocturne.core.light.DisplayProfile
+import io.github.anbu00001.nocturne.core.light.EveningLight
+import io.github.anbu00001.nocturne.core.light.EveningLightEstimate
+import io.github.anbu00001.nocturne.core.light.LightReading
+import io.github.anbu00001.nocturne.core.light.ScreenSpan
+import io.github.anbu00001.nocturne.core.light.UnmeasuredLight
 import io.github.anbu00001.nocturne.core.sleep.HabitualWindow
 import io.github.anbu00001.nocturne.core.sleep.NightSession
 import io.github.anbu00001.nocturne.core.sleep.NightSleep
@@ -11,13 +17,14 @@ import io.github.anbu00001.nocturne.core.sleep.SleepEstimate
 import io.github.anbu00001.nocturne.core.sleep.SleepNights
 import io.github.anbu00001.nocturne.core.sleep.SleepReport
 import io.github.anbu00001.nocturne.core.sleep.SleepSource
+import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import java.time.LocalDate
 
 /** Sessions and nights are rebuilt together in one transaction, so no reader sees one without the other. */
-class DerivedTables(private val db: NocturneDatabase) {
+class DerivedTables(private val db: NocturneDatabase, display: DisplayProfile = DisplayProfile.GENERIC) {
     private val sessions = SessionRecomputer(db)
-    private val nights = NightRecomputer(db)
+    private val nights = NightRecomputer(db, display)
 
     /** Returns the number of sessions written. */
     suspend fun recomputeFrom(changedFromTs: Long, classifier: ClassifierConfig, sleep: SleepConfig, fallbackZoneId: String): Int =
@@ -40,10 +47,10 @@ class DerivedTables(private val db: NocturneDatabase) {
 
 /**
  * Rebuilds the nights table, and each session's evening-window and sleep-onset tags, from sessions, the
- * user's sleep reports and charging samples (spec §6.3). Like SessionRecomputer, incremental and full
- * runs share one path and write the same rows; NightRecomputerTest checks that.
+ * user's sleep reports, charging samples and light samples (spec §6.2, §6.3). Like SessionRecomputer,
+ * incremental and full runs share one path and write the same rows; NightRecomputerTest checks that.
  */
-class NightRecomputer(private val db: NocturneDatabase) {
+class NightRecomputer(private val db: NocturneDatabase, private val display: DisplayProfile = DisplayProfile.GENERIC) {
 
     suspend fun recomputeAll(config: SleepConfig): Int = recompute(null, config)
 
@@ -70,15 +77,17 @@ class NightRecomputer(private val db: NocturneDatabase) {
         val context = if (from == null) emptyList() else stored.filterKeys { it < from }.toSortedMap().values.map { it.toNightSleep(reports) }
         val loadFromTs = if (from == null) Long.MIN_VALUE else SleepNights.groupStartUtc(from, restartOffset) - LocalClock.HOUR_MS
         val samples = sleep.powerSamplesFrom(if (from == null) Long.MIN_VALUE else loadFromTs - LocalClock.DAY_MS)
+        val dataToTs = maxOf(raw.lastTimestamp() ?: Long.MIN_VALUE, db.harvest().cursor() ?: Long.MIN_VALUE)
         val inputs = SleepNights.inputs(
             sessions = sessions.startingFrom(loadFromTs).map { OffsetSession(it.toNightSession(), it.utcOffsetMinutes) },
             charging = SleepNights.chargingIntervals(samples.map { it.timestamp to it.charging }),
             dataFromTs = raw.firstTimestamp() ?: Long.MAX_VALUE,
-            dataToTs = maxOf(raw.lastTimestamp() ?: Long.MIN_VALUE, db.harvest().cursor() ?: Long.MIN_VALUE),
+            dataToTs = dataToTs,
         ).filter { from == null || it.date >= from }
         val fresh = SleepNights.infer(context, inputs, reports, config).associateBy { it.date }
         val all = context + fresh.values.sortedBy { it.date }
         val contextByDate = context.associateBy { it.date }
+        val lightDataToTs = maxOf(dataToTs, db.light().lastEnd() ?: Long.MIN_VALUE)
 
         val dates = (sessions.nightDates().map(LocalDate::parse) + fresh.keys).toSortedSet()
         val windows = SleepNights.windowsFor(dates, all, config)
@@ -93,14 +102,44 @@ class NightRecomputer(private val db: NocturneDatabase) {
             val key = date.toString()
             sessions.tagNight(key, window.window.startMinute, window.window.endMinute, night?.onsetTs)
             val eveningMinutes = (sessions.eveningScreenMs(key) / LocalClock.MINUTE_MS).toInt()
+            val nightSessions = sessions.forNight(key)
+            val offset = night?.offsetMinutes ?: nightSessions.firstOrNull()?.utcOffsetMinutes ?: restartOffset
+            val light = lightFor(date, offset, window.window, night?.onsetTs, nightSessions, lightDataToTs)
             rows += when {
                 night != null -> night.toEntity(eveningMinutes)
                 else -> NightEntity(key, null, null, 0f, SleepSource.INFERRED, eveningMinutes, 0, null, null, null, null, null)
-            }.withWindow(window)
+            }.withWindow(window).withLight(light)
         }
         sleep.deleteNightsFrom(from?.toString() ?: "")
         sleep.upsertNights(rows)
         rows.size
+    }
+
+    /**
+     * Spec §6.2 for one night, from the evening window's start to sleep onset. Null when no light sample reaches
+     * that interval, which is every night before the light service ran: those are not modelled as dark.
+     */
+    private suspend fun lightFor(
+        date: LocalDate,
+        offsetMinutes: Int,
+        window: EveningWindow,
+        onsetTs: Long?,
+        nightSessions: List<SessionEntity>,
+        dataToTs: Long,
+    ): EveningLightEstimate? {
+        val interval = EveningLight.interval(date, offsetMinutes, window, onsetTs, dataToTs) ?: return null
+        val samples = db.light().overlapping(interval.startTs - SAMPLE_REACH_MS, interval.endTs + SAMPLE_REACH_MS)
+        if (samples.none { it.timestamp < interval.endTs && it.timestamp + it.durationMs > interval.startTs }) return null
+        return EveningLight.estimate(
+            interval,
+            nightSessions.map { ScreenSpan(it.startTs, it.endTs) },
+            samples.map { LightReading(it.timestamp, it.durationMs, it.ambientLux?.toDouble(), it.brightnessSetting, it.darkUi, it.warmFilter) },
+            display,
+        )
+    }
+
+    private companion object {
+        val SAMPLE_REACH_MS = UnmeasuredLight().sampleReachMs
     }
 }
 
@@ -148,6 +187,16 @@ private fun NightEntity.withWindow(w: HabitualWindow) = copy(
     eveningWindowEndMinute = w.window.endMinute,
     windowPersonalised = w.personalised,
     windowNights = w.nights,
+)
+
+private fun NightEntity.withLight(light: EveningLightEstimate?) = copy(
+    modelledSuppressionPct = light?.suppression?.percent?.mid?.toFloat(),
+    suppressionLowPct = light?.suppression?.percent?.low?.toFloat(),
+    suppressionHighPct = light?.suppression?.percent?.high?.toFloat(),
+    melanopicDoseLuxHours = light?.suppression?.melanopicDoseLuxHours?.mid?.toFloat(),
+    lightScreenMinutes = light?.screenMinutes ?: 0,
+    lightMeasuredMinutes = light?.measuredMinutes ?: 0,
+    suppressionDurationClamped = light?.suppression?.durationClamped ?: false,
 )
 
 private fun NightEntity.hasWindow(w: HabitualWindow) =

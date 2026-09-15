@@ -1,6 +1,9 @@
 package io.github.anbu00001.nocturne.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -20,25 +23,32 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.WorkInfo
 import io.github.anbu00001.nocturne.NocturneApp
+import io.github.anbu00001.nocturne.collector.AndroidDisplayState
 import io.github.anbu00001.nocturne.collector.HarvestScheduler
+import io.github.anbu00001.nocturne.collector.LightSamplerService
+import io.github.anbu00001.nocturne.collector.LightService
 import io.github.anbu00001.nocturne.core.event.EventType
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
 import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.HarvestRunEntity
+import io.github.anbu00001.nocturne.data.LightSampleEntity
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.PackageCount
 import io.github.anbu00001.nocturne.data.writeCsv
@@ -74,6 +84,11 @@ data class SleepSettings(
     val reports: Int = 0,
 )
 
+data class LightSettings(
+    val latest: LightSampleEntity? = null,
+    val lastDay: Int = 0,
+)
+
 class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
 
     val health: StateFlow<Health> = combine(
@@ -92,6 +107,13 @@ class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
     ) { nights, reports ->
         SleepSettings(nights.lastOrNull { it.windowPersonalised } ?: nights.lastOrNull(), reports)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SleepSettings())
+
+    val light: StateFlow<LightSettings> = combine(
+        app.database.light().observeLatest(),
+        app.database.light().observeCountSince(System.currentTimeMillis() - LocalClock.DAY_MS),
+    ) { latest, lastDay ->
+        LightSettings(latest, lastDay)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), LightSettings())
 
     private val _diagnostics = MutableStateFlow(Diagnostics())
     val diagnostics = _diagnostics.asStateFlow()
@@ -144,6 +166,7 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
     val vm = viewModel { SettingsViewModel(app) }
     val health by vm.health.collectAsStateWithLifecycle()
     val sleep by vm.sleep.collectAsStateWithLifecycle()
+    val light by vm.light.collectAsStateWithLifecycle()
     val diagnostics by vm.diagnostics.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     var confirmWipe by remember { mutableStateOf(false) }
@@ -153,6 +176,24 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
     }
     LaunchedEffect(Unit) { vm.refreshDiagnostics() }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
+
+    // Service state lives outside the database; re-read it whenever the screen resumes or the switch changes.
+    var refreshes by remember { mutableIntStateOf(0) }
+    LifecycleResumeEffect(Unit) {
+        refreshes++
+        onPauseOrDispose { }
+    }
+    val lightEnabled = remember(refreshes) { LightService.isEnabled(context) }
+    val samplerRunning = remember(refreshes) { LightSamplerService.running }
+    val refusal = remember(refreshes) { LightService.lastRefusal(context) }
+    val warmFilter = remember(refreshes) { AndroidDisplayState(context).snapshot().warmFilter }
+    val notificationsGranted = remember(refreshes) {
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    }
+    val notificationLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { refreshes++ }
+    val lightSensor = remember { app.deviceProfile.lightSensor() }
+    val displayProfile = remember { app.deviceProfile.displayProfile() }
 
     Column(
         Modifier
@@ -189,6 +230,64 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
         }
         Text(Tone.Settings.counts(health.rawEvents, health.sessions), color = muted)
         Button(onClick = vm::harvestNow) { Text(Tone.Settings.HARVEST_NOW) }
+
+        HorizontalDivider()
+        SectionTitle(Tone.Light.SECTION)
+        Text(if (lightEnabled) Tone.Light.ENABLED else Tone.Light.DISABLED)
+        if (lightEnabled) Text(Tone.Light.sampler(samplerRunning), color = muted)
+        if (lightEnabled) {
+            OutlinedButton(onClick = {
+                LightService.setEnabled(context, false)
+                refreshes++
+            }) { Text(Tone.Light.STOP) }
+        } else {
+            Button(onClick = {
+                LightService.setEnabled(context, true)
+                refreshes++
+            }) { Text(Tone.Light.START) }
+        }
+        val latestSample = light.latest
+        Text(
+            if (latestSample == null) {
+                Tone.Light.NO_SAMPLES
+            } else {
+                Tone.Light.lastSample(dateTime(latestSample.timestamp + latestSample.durationMs), light.lastDay)
+            },
+            color = muted,
+        )
+        refusal?.let { Text(Tone.Light.refused(dateTime(it.at), it.reason), color = MaterialTheme.colorScheme.error) }
+        Text(
+            lightSensor?.let { Tone.Light.sensor(it.name, plainNumber(it.resolutionLux.toDouble()), plainNumber(it.maximumLux.toDouble())) }
+                ?: Tone.Light.NO_SENSOR,
+            color = muted,
+        )
+        Text(
+            Tone.Light.display(
+                if (app.deviceProfile.isOppoA18) Tone.Light.PROFILE_A18 else Tone.Light.PROFILE_GENERIC,
+                plainNumber(displayProfile.minNits),
+                plainNumber(displayProfile.peakNits),
+            ),
+            color = muted,
+        )
+        Text(
+            Tone.Light.warmFilter(
+                when (warmFilter) {
+                    true -> Tone.Light.STATE_ON
+                    false -> Tone.Light.STATE_OFF
+                    null -> Tone.Light.STATE_UNREADABLE
+                },
+            ),
+            color = muted,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Text(Tone.Settings.status(Tone.Light.NOTIFICATION_PERMISSION, grantedText(notificationsGranted)), color = muted)
+            if (!notificationsGranted) {
+                OutlinedButton(onClick = { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }) {
+                    Text(Tone.Light.ALLOW_NOTIFICATION)
+                }
+                Text(Tone.Light.NOTIFICATION_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+            }
+        }
 
         HorizontalDivider()
         SectionTitle(Tone.Settings.SLEEP)
@@ -259,6 +358,10 @@ private fun grantedText(granted: Boolean) = if (granted) Tone.Settings.GRANTED e
 private val runFormat = DateTimeFormatter.ofPattern("d MMM HH:mm")
 
 private fun dateTime(ts: Long): String = Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(runFormat)
+
+/** 490, 2.5, 0.01: no trailing zeros. */
+private fun plainNumber(value: Double): String =
+    "%.3f".format(value).trimEnd('0').trimEnd('.').ifEmpty { "0" }
 
 private fun outcomeLabel(outcome: HarvestOutcome): String = when (outcome) {
     HarvestOutcome.OK -> Tone.HarvestOutcome.OK

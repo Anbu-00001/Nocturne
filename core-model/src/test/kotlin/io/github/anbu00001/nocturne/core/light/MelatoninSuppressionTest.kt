@@ -98,4 +98,13 @@ class MelatoninSuppressionTest {
         assertEquals(0, estimate.exposedMinutes)
         assertEquals(1.5, estimate.melanopicDoseLuxHours.mid, 1e-9)
     }
+
+    @Test
+    fun `each bound picks its own exposed minutes, so light only the high end assumes still counts`() {
+        val estimate = EveningExposure.estimate(List(120) { Band(0.0, 0.5, 50.0) })
+        assertEquals(0.0, estimate.percent.low)
+        assertEquals(0.0, estimate.percent.mid)
+        assertEquals(percent(50.0, 120.0), estimate.percent.high, 1e-9)
+        assertEquals(0, estimate.exposedMinutes)
+    }
 }

@@ -8,6 +8,10 @@
         tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- Light sampler (spec §4.2, §4.3): specialUse, never dataSync, which Android 15 caps at 6 h a day. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+
     <!-- Package visibility without QUERY_ALL_PACKAGES: only what the classifier resolves. -->
     <queries>
         <intent>
@@ -29,5 +33,14 @@
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
             </intent-filter>
         </receiver>
+
+        <service
+            android:name=".LightSamplerService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Reads the ambient light sensor while the screen is on, for a personal on-device sleep and evening-light log. Screen on and off broadcasts can only be received by a running process." />
+        </service>
     </application>
 </manifest>

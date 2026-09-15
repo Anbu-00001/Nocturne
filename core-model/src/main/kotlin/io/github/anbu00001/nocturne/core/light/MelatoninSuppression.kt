@@ -77,32 +77,39 @@ data class SuppressionEstimate(
  */
 object EveningExposure {
 
-    /** [minutes] holds one mEDI band per consecutive minute of the evening. */
+    /**
+     * [minutes] holds one mEDI band per consecutive minute of the evening. Each bound runs the same calculation on
+     * its own series, so which minutes clear [floorLux] depends on the scenario: room light that only the high end
+     * assumes stayed on (spec §6.1, nothing measures the room with the screen off) still counts toward the high
+     * bound. Where dropping dim minutes would lift a bound past the middle, it is held at the middle.
+     */
     fun estimate(minutes: List<Band>, floorLux: Double = MelanopicTargets.SLEEP_MAX_LUX, sensitivity: Double = 1.0): SuppressionEstimate {
         val dose = Band(minutes.sumOf { it.low }, minutes.sumOf { it.mid }, minutes.sumOf { it.high }).times(1.0 / 60)
-        val exposed = minutes.indices.filter { minutes[it].mid >= floorLux }
-        if (exposed.isEmpty()) return SuppressionEstimate(Band.ZERO, dose, 0, durationClamped = false)
 
-        val run = longestRun(exposed)
-        val span = exposed.first()..exposed.last()
-        val variants = listOf(exposed, run.toList(), span.toList())
-
-        fun suppression(indices: List<Int>, component: (Band) -> Double): Double {
-            val duration = indices.size.toDouble()
-            val mean = indices.sumOf { component(minutes[it]) } / duration
-            return MelatoninSuppression.percent(mean, duration, sensitivity = sensitivity)
+        /** Exposed minutes, longest run, whole span: suppression for each, with whether its duration was clamped. */
+        fun variants(component: (Band) -> Double): List<Pair<Double, Boolean>> {
+            val exposed = minutes.indices.filter { component(minutes[it]) >= floorLux }
+            if (exposed.isEmpty()) return listOf(0.0 to false)
+            val run = longestRun(exposed)
+            val span = exposed.first()..exposed.last()
+            return listOf(exposed, run.toList(), span.toList()).map { indices ->
+                val duration = indices.size.toDouble()
+                val mean = indices.sumOf { component(minutes[it]) } / duration
+                MelatoninSuppression.percent(mean, duration, sensitivity = sensitivity) to MelatoninSuppression.isExtrapolated(duration)
+            }
         }
 
-        val percent = Band(
-            low = variants.minOf { suppression(it) { b -> b.low } },
-            mid = suppression(exposed) { it.mid },
-            high = variants.maxOf { suppression(it) { b -> b.high } },
-        )
+        val middle = variants { it.mid }
+        val mid = middle.first().first
         return SuppressionEstimate(
-            percent = percent,
+            percent = Band(
+                low = minOf(variants { it.low }.minOf { it.first }, mid),
+                mid = mid,
+                high = maxOf(variants { it.high }.maxOf { it.first }, mid),
+            ),
             melanopicDoseLuxHours = dose,
-            exposedMinutes = exposed.size,
-            durationClamped = variants.any { MelatoninSuppression.isExtrapolated(it.size.toDouble()) },
+            exposedMinutes = minutes.count { it.mid >= floorLux },
+            durationClamped = middle.any { it.second },
         )
     }
 

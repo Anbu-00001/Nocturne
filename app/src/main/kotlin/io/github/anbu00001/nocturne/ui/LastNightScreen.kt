@@ -178,6 +178,20 @@ fun LastNightScreen(app: NocturneApp) {
                         ?: Tone.LastNight.MEDIAN_PENDING,
                     color = muted,
                 )
+                val suppression = night?.modelledSuppressionPct
+                if (night != null && suppression != null) {
+                    Text(
+                        Tone.Light.nightSuppression(
+                            percentText(suppression),
+                            percentText(night.suppressionLowPct ?: suppression),
+                            percentText(night.suppressionHighPct ?: suppression),
+                        ),
+                    )
+                    Text(Tone.Light.coverage(night.lightMeasuredMinutes, night.lightScreenMinutes), color = muted)
+                    if (night.suppressionDurationClamped) {
+                        Text(Tone.Light.DURATION_CLAMPED, style = MaterialTheme.typography.bodySmall, color = muted)
+                    }
+                }
             }
         }
         item {
