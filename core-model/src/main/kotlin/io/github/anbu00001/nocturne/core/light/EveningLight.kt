@@ -69,7 +69,10 @@ object EveningLight {
         return if (end > start) EveningInterval(start, end) else null
     }
 
-    /** Light at the eyes for one moment: the screen from its brightness and mode, the room from [lux] or the prior. */
+    /**
+     * Light at the eyes for one moment: the screen from its brightness and mode, the room from [lux] or the prior.
+     * [evening] picks warm evening room light over daylight-like room light.
+     */
     fun atEyes(
         lux: Double?,
         brightnessSetting: Int?,
@@ -78,8 +81,19 @@ object EveningLight {
         profile: DisplayProfile,
         assumptions: LightAssumptions = LightAssumptions(),
         unmeasured: UnmeasuredLight = UnmeasuredLight(),
+        evening: Boolean = true,
     ): Band = screen(brightnessSetting, darkUi, warmFilter, profile, assumptions, unmeasured) +
-        LightDose.ambientMelanopicEdi(lux, evening = true, assumptions = assumptions)
+        LightDose.ambientMelanopicEdi(lux, evening = evening, assumptions = assumptions)
+
+    /** The screen's share alone, for when the room is not measured and a prior would only restate an assumption. */
+    fun screenAtEyes(
+        brightnessSetting: Int?,
+        darkUi: Boolean?,
+        warmFilter: Boolean?,
+        profile: DisplayProfile,
+        assumptions: LightAssumptions = LightAssumptions(),
+        unmeasured: UnmeasuredLight = UnmeasuredLight(),
+    ): Band = screen(brightnessSetting, darkUi, warmFilter, profile, assumptions, unmeasured)
 
     fun estimate(
         interval: EveningInterval,

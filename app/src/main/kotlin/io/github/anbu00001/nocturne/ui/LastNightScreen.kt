@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -222,11 +225,16 @@ fun LastNightScreen(app: NocturneApp) {
         SleepEntryDialog(
             initialOnset = night?.estimatedSleepOnset?.let { localTime(it, offset) } ?: LocalTime.MIDNIGHT,
             initialWake = night?.estimatedWakeTime?.let { localTime(it, offset) } ?: LocalTime.of(8, 0),
-            onSave = { onset, wake ->
+            initialLatency = state.report?.sleepLatencyScore,
+            onSave = { onset, wake, latency ->
                 entering = false
                 reportTimes(nightDate, onset, wake, offset)?.let { (onsetTs, wakeTs) ->
-                    app.saveSleepReport(nightDate, onsetTs, wakeTs, offset)
+                    app.saveSleepReport(nightDate, onsetTs, wakeTs, offset, latency)
                 }
+            },
+            onNoSleep = {
+                entering = false
+                app.saveNoSleepReport(nightDate, offset)
             },
             onDismiss = { entering = false },
         )
@@ -238,24 +246,28 @@ private fun SleepSummary(night: NightEntity?, onEnter: () -> Unit, onRemove: () 
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val onset = night?.estimatedSleepOnset
     val wake = night?.estimatedWakeTime
+    val reported = night?.source == SleepSource.USER_REPORTED
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        if (night == null || onset == null || wake == null) {
+        if (night != null && night.noSleep) {
+            Text(if (reported) Tone.Sleep.NO_SLEEP_REPORTED else Tone.Sleep.NO_SLEEP_FOUND, style = MaterialTheme.typography.titleMedium)
+            if (!reported) Text(Tone.Sleep.noSleepBasis(confidenceLabel(night.confidence)), color = muted)
+        } else if (night == null || onset == null || wake == null) {
             Text(Tone.Sleep.NONE, color = muted)
             OutlinedButton(onClick = onEnter) { Text(Tone.Sleep.ENTER) }
             return@Column
+        } else {
+            val offset = night.utcOffsetMinutes
+            Text(
+                if (reported) {
+                    Tone.Sleep.reported(clockText(onset, offset), clockText(wake, offset))
+                } else {
+                    Tone.Sleep.estimated(clockText(onset, offset), clockText(wake, offset))
+                },
+                style = MaterialTheme.typography.titleMedium,
+            )
+            if (!reported) Text(Tone.Sleep.basis(confidenceLabel(night.confidence)), color = muted)
+            Text(Tone.Sleep.interruptions(night.postOnsetInterruptions), color = muted)
         }
-        val offset = night.utcOffsetMinutes
-        val reported = night.source == SleepSource.USER_REPORTED
-        Text(
-            if (reported) {
-                Tone.Sleep.reported(clockText(onset, offset), clockText(wake, offset))
-            } else {
-                Tone.Sleep.estimated(clockText(onset, offset), clockText(wake, offset))
-            },
-            style = MaterialTheme.typography.titleMedium,
-        )
-        if (!reported) Text(Tone.Sleep.basis(confidenceLabel(night.confidence)), color = muted)
-        Text(Tone.Sleep.interruptions(night.postOnsetInterruptions), color = muted)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = onEnter) { Text(if (reported) Tone.Sleep.CHANGE else Tone.Sleep.CORRECT) }
             if (reported) TextButton(onClick = onRemove) { Text(Tone.Sleep.REMOVE) }
@@ -263,16 +275,22 @@ private fun SleepSummary(night: NightEntity?, onEnter: () -> Unit, onRemove: () 
     }
 }
 
-/** One tap per step, preset to the estimate; the μEMA rule is that entering times never becomes a chore (spec §7). */
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * One tap per step, preset to the estimate; the μEMA rule is that entering times never becomes a chore (spec §7).
+ * "I did not sleep" is one tap on the first step; the falling-asleep band is optional and sits on the wake step.
+ */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun SleepEntryDialog(
     initialOnset: LocalTime,
     initialWake: LocalTime,
-    onSave: (LocalTime, LocalTime) -> Unit,
+    initialLatency: Int?,
+    onSave: (LocalTime, LocalTime, Int?) -> Unit,
+    onNoSleep: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var step by remember { mutableIntStateOf(0) }
+    var latency by remember { mutableStateOf(initialLatency) }
     val onsetState = rememberTimePickerState(initialOnset.hour, initialOnset.minute, is24Hour = true)
     val wakeState = rememberTimePickerState(initialWake.hour, initialWake.minute, is24Hour = true)
     AlertDialog(
@@ -281,6 +299,18 @@ private fun SleepEntryDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 TimePicker(state = if (step == 0) onsetState else wakeState, layoutType = TimePickerLayoutType.Vertical)
+                if (step == 1) {
+                    Text(Tone.Sleep.LATENCY_TITLE, style = MaterialTheme.typography.labelLarge)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Tone.Sleep.LATENCY_BANDS.forEachIndexed { score, label ->
+                            FilterChip(
+                                selected = latency == score,
+                                onClick = { latency = if (latency == score) null else score },
+                                label = { Text(label) },
+                            )
+                        }
+                    }
+                }
                 Text(Tone.Sleep.ENTRY_NOTE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
@@ -289,11 +319,16 @@ private fun SleepEntryDialog(
                 if (step == 0) {
                     step = 1
                 } else {
-                    onSave(LocalTime.of(onsetState.hour, onsetState.minute), LocalTime.of(wakeState.hour, wakeState.minute))
+                    onSave(LocalTime.of(onsetState.hour, onsetState.minute), LocalTime.of(wakeState.hour, wakeState.minute), latency)
                 }
             }) { Text(if (step == 0) Tone.Sleep.NEXT else Tone.Sleep.SAVE) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(Tone.Sleep.CANCEL) } },
+        dismissButton = {
+            Row {
+                if (step == 0) TextButton(onClick = onNoSleep) { Text(Tone.Sleep.DIDNT_SLEEP) }
+                TextButton(onClick = onDismiss) { Text(Tone.Sleep.CANCEL) }
+            }
+        },
     )
 }
 

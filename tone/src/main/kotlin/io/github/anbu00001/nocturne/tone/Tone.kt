@@ -45,12 +45,14 @@ object Tone {
         fun windowStartsIn(time: String, wait: String) = "Evening window starts at $time, in $wait"
         fun windowOpen(since: String, until: String) = "In the evening window since $since, until $until"
         fun atEyes(mid: String) = "About $mid lux melanopic at your eyes now"
+        fun screenAtEyes(mid: String) = "About $mid lux melanopic from the screen now"
         fun range(low: String, high: String) = "Modelled range $low to $high lux"
         const val UNDER_TARGET = "Under the evening target of 10 lux"
         const val OVER_TARGET = "Above the evening target of 10 lux"
         const val SPANS_TARGET = "The range spans the evening target of 10 lux"
         const val MEASURED = "Room light from the sensor in the last minute; screen light from brightness and display mode."
-        const val NOT_MEASURED = "Room light is not being measured, so it uses a wide evening prior; screen light is from brightness and display mode."
+        const val NOT_MEASURED =
+            "Room light is not being measured, so this is the screen alone, from brightness and display mode. A lit room adds to it."
         const val CHART_NOTE = "Log scale from 0.1 to 1000 lux. The bar is the modelled range, the line marks 10 lux."
         fun glances(count: Int) = if (count == 1) "1 glance so far tonight" else "$count glances so far tonight"
         const val GLANCES_PENDING = "Glances appear after the next harvest."
@@ -174,6 +176,15 @@ object Tone {
         const val NEXT = "Next"
         const val SAVE = "Save"
         const val CANCEL = "Cancel"
+        const val DIDNT_SLEEP = "I did not sleep"
+        const val NO_SLEEP_REPORTED = "No sleep this night, as you entered it"
+        const val NO_SLEEP_FOUND = "No sleep found this night"
+        fun noSleepBasis(confidence: String) =
+            "The quiet stretches look more like time away from the phone than sleep, $confidence confidence"
+        const val LATENCY_TITLE = "Time to fall asleep (optional)"
+        val LATENCY_BANDS = listOf("15 min or less", "16 to 30 min", "31 to 60 min", "Over 60 min")
+        fun noSleepDetail(night: String, source: String) = "$night: no sleep, $source"
+        const val CHART_NO_SLEEP = "A ring marks a night with no sleep."
     }
 
     object Patterns {

@@ -90,7 +90,12 @@ class MigrationTest {
             assertEquals(0, night.lightScreenMinutes)
             assertEquals(0, night.lightMeasuredMinutes)
             assertFalse(night.suppressionDurationClamped)
-            assertEquals(1, room.sleep().reports().size)
+            assertFalse(night.noSleep)
+            assertFalse(night.inferredNoSleep)
+            val report = room.sleep().reports().single()
+            assertEquals(10L, report.onsetTs)
+            assertFalse(report.noSleep)
+            assertNull(report.sleepLatencyScore)
         } finally {
             room.close()
         }

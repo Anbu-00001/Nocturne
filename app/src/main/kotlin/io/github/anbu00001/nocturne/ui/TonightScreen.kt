@@ -122,7 +122,13 @@ fun TonightScreen(app: NocturneApp) {
     val lux = state.latestSample
         ?.takeIf { state.now - (it.timestamp + it.durationMs) <= FRESH_SAMPLE_MS }
         ?.ambientLux?.toDouble()
-    val band = EveningLight.atEyes(lux, display.brightnessSetting, display.darkUi, display.warmFilter, profile)
+    val evening = state.window.contains(LocalClock.minuteOfDay(state.now, currentOffsetMinutes()))
+    // Without a room reading the headline is the screen alone: a room prior would only restate an assumption as a number.
+    val band = if (lux != null) {
+        EveningLight.atEyes(lux, display.brightnessSetting, display.darkUi, display.warmFilter, profile, evening = evening)
+    } else {
+        EveningLight.screenAtEyes(display.brightnessSetting, display.darkUi, display.warmFilter, profile)
+    }
 
     Column(
         Modifier

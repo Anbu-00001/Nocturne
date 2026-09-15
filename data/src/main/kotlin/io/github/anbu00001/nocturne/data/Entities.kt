@@ -138,16 +138,29 @@ data class NightEntity(
     @ColumnInfo(defaultValue = "0") val lightMeasuredMinutes: Int = 0,
     /** The modelled exposure ran outside the 30 min to 4 h Giménez fitted, so the nearest limit was used. */
     @ColumnInfo(defaultValue = "0") val suppressionDurationClamped: Boolean = false,
+    /** Schema 3. No sleep this night, entered by the user or found by the inference; the estimated times are then null. */
+    @ColumnInfo(defaultValue = "0") val noSleep: Boolean = false,
+    /** Schema 3. The raw inference found no sleep, whatever the user entered; the inferred times are then the quiet stretch that lost. */
+    @ColumnInfo(defaultValue = "0") val inferredNoSleep: Boolean = false,
 )
 
-/** "I slept about X to Y" (spec §6.3). User data: kept through every recompute, removed only by the user. */
+/** "I slept about X to Y", or "I did not sleep" (spec §6.3). User data: kept through every recompute, removed only by the user. */
 @Entity(tableName = "sleep_reports")
 data class SleepReportEntity(
     @PrimaryKey val dateOfNight: String,
+    /** Both 0 when [noSleep]. */
     val onsetTs: Long,
     val wakeTs: Long,
     val utcOffsetMinutes: Int,
     val reportedAt: Long,
+    /** Schema 3. The user did not sleep this night. */
+    @ColumnInfo(defaultValue = "0") val noSleep: Boolean = false,
+    /**
+     * Schema 3. How long falling asleep took, banded as the Pittsburgh Sleep Quality Index scores its item 2: 0 is
+     * 15 min or less, 1 is 16 to 30, 2 is 31 to 60, 3 is over 60. Optional. Collected from Phase 2 because the
+     * personal sensitivity fit (spec §6.2, Phase 3c) needs 30 nights of it.
+     */
+    val sleepLatencyScore: Int? = null,
 )
 
 /** Charging state at each harvester run, which corroborates sleep (spec §6.3). Recorded, not derived. */

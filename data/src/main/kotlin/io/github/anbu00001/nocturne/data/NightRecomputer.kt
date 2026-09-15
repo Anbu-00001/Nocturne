@@ -63,7 +63,7 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
         val raw = db.rawEvents()
         val reports = sleep.reports().associate { row ->
             val date = LocalDate.parse(row.dateOfNight)
-            date to SleepReport(date, row.onsetTs, row.wakeTs)
+            date to if (row.noSleep) SleepReport(date, null, null) else SleepReport(date, row.onsetTs, row.wakeTs)
         }
         val stored = sleep.nights().associateBy { LocalDate.parse(it.dateOfNight) }
 
@@ -162,6 +162,8 @@ private fun NightSleep.toEntity(eveningMinutes: Int) = NightEntity(
     inferredWakeTime = inferred?.wakeTs,
     inferredConfidence = inferred?.confidence ?: 0.0,
     utcOffsetMinutes = offsetMinutes,
+    noSleep = noSleep,
+    inferredNoSleep = inferred?.noSleep ?: false,
 )
 
 /** Rebuilds what later nights need from an earlier stored night: its raw inference and final times. */
@@ -169,16 +171,19 @@ private fun NightEntity.toNightSleep(reports: Map<LocalDate, SleepReport>): Nigh
     val date = LocalDate.parse(dateOfNight)
     val onset = inferredSleepOnset
     val wake = inferredWakeTime
+    // Later nights only need the verdict, so infinite odds stand in for the log odds that were not stored.
+    val odds = if (inferredNoSleep) Double.POSITIVE_INFINITY else Double.NEGATIVE_INFINITY
     return NightSleep(
         date = date,
         offsetMinutes = utcOffsetMinutes,
-        inferred = if (onset != null && wake != null) SleepEstimate(onset, wake, inferredConfidence, postOnsetInterruptions) else null,
+        inferred = if (onset != null && wake != null) SleepEstimate(onset, wake, inferredConfidence, postOnsetInterruptions, noSleepLogOdds = odds) else null,
         report = reports[date],
         onsetTs = estimatedSleepOnset,
         wakeTs = estimatedWakeTime,
         confidence = confidence.toDouble(),
         source = source,
         interruptions = postOnsetInterruptions,
+        noSleep = noSleep,
     )
 }
 

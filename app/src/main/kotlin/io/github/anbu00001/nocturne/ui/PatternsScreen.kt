@@ -22,6 +22,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
@@ -114,7 +115,7 @@ private fun SleepChart(nights: List<NightEntity>) {
     val colors = MaterialTheme.colorScheme
     val muted = colors.onSurfaceVariant
     Text(Tone.Patterns.SLEEP, style = MaterialTheme.typography.titleMedium)
-    val slept = nights.filter { it.estimatedSleepOnset != null && it.estimatedWakeTime != null }
+    val slept = nights.filter { it.noSleep || (it.estimatedSleepOnset != null && it.estimatedWakeTime != null) }
     if (slept.isEmpty()) {
         Text(Tone.Patterns.SLEEP_EMPTY, color = muted)
         return
@@ -131,11 +132,15 @@ private fun SleepChart(nights: List<NightEntity>) {
         return (ts - noonUtc) / LocalClock.MINUTE_MS
     }
     val spans = slots.mapNotNull { date ->
-        byDate[date]?.let { n -> date to (sinceNoon(date, n.estimatedSleepOnset!!, n.utcOffsetMinutes) to sinceNoon(date, n.estimatedWakeTime!!, n.utcOffsetMinutes)) }
+        val n = byDate[date] ?: return@mapNotNull null
+        val onset = n.estimatedSleepOnset ?: return@mapNotNull null
+        val wake = n.estimatedWakeTime ?: return@mapNotNull null
+        date to (sinceNoon(date, onset, n.utcOffsetMinutes) to sinceNoon(date, wake, n.utcOffsetMinutes))
     }.toMap()
     val step = 120.0
-    val top = (floor(spans.values.minOf { it.first } / step) * step).toLong()
-    val bottom = maxOf((ceil(spans.values.maxOf { it.second } / step) * step).toLong(), top + 8 * 60)
+    // Sleepless nights have no span; with only those, the axis shows an ordinary night, 22:00 to 06:00.
+    val top = spans.values.minOfOrNull { it.first }?.let { (floor(it / step) * step).toLong() } ?: (10 * 60L)
+    val bottom = maxOf(spans.values.maxOfOrNull { it.second }?.let { (ceil(it / step) * step).toLong() } ?: 0L, top + 8 * 60)
 
     var selected by remember(slept) { mutableStateOf(last) }
     val measurer = rememberTextMeasurer()
@@ -151,7 +156,7 @@ private fun SleepChart(nights: List<NightEntity>) {
                 detectTapGestures { tap ->
                     val slotWidth = (size.width - axisWidth.toPx()) / slots.size
                     val index = ((tap.x - axisWidth.toPx()) / slotWidth).toInt()
-                    slots.getOrNull(index)?.takeIf { it in spans }?.let { selected = it }
+                    slots.getOrNull(index)?.takeIf { it in byDate }?.let { selected = it }
                 }
             },
     ) {
@@ -175,16 +180,23 @@ private fun SleepChart(nights: List<NightEntity>) {
         val barWidth = minOf(slotWidth - 2.dp.toPx(), 24.dp.toPx()).coerceAtLeast(2f)
         val radius = CornerRadius(minOf(4.dp.toPx(), barWidth / 2))
         slots.forEachIndexed { i, date ->
-            val (onset, wake) = spans[date] ?: return@forEachIndexed
-            val reported = byDate.getValue(date).source == SleepSource.USER_REPORTED
+            val n = byDate[date] ?: return@forEachIndexed
+            val reported = n.source == SleepSource.USER_REPORTED
             val alpha = when {
                 reported -> 1f
                 date == selected -> 0.8f
                 else -> 0.45f
             }
+            val cx = left + (i + 0.5f) * slotWidth
+            if (n.noSleep) {
+                val r = minOf(barWidth / 2, 6.dp.toPx())
+                drawCircle(colors.primary.copy(alpha = maxOf(alpha, 0.6f)), r, Offset(cx, plotTop + r + 2.dp.toPx()), style = Stroke(1.5.dp.toPx()))
+                return@forEachIndexed
+            }
+            val (onset, wake) = spans[date] ?: return@forEachIndexed
             drawRoundRect(
                 colors.primary.copy(alpha = alpha),
-                Offset(left + i * slotWidth + (slotWidth - barWidth) / 2, y(onset)),
+                Offset(cx - barWidth / 2, y(onset)),
                 Size(barWidth, y(wake) - y(onset)),
                 radius,
             )
@@ -199,16 +211,19 @@ private fun SleepChart(nights: List<NightEntity>) {
     }
 
     byDate[selected]?.let { n ->
+        val source = if (n.source == SleepSource.USER_REPORTED) Tone.Patterns.SOURCE_REPORTED else Tone.Patterns.SOURCE_ESTIMATED
+        val onset = n.estimatedSleepOnset
+        val wake = n.estimatedWakeTime
         Text(
-            Tone.Patterns.sleepDetail(
-                shortDate(n.dateOfNight),
-                clockText(n.estimatedSleepOnset!!, n.utcOffsetMinutes),
-                clockText(n.estimatedWakeTime!!, n.utcOffsetMinutes),
-                if (n.source == SleepSource.USER_REPORTED) Tone.Patterns.SOURCE_REPORTED else Tone.Patterns.SOURCE_ESTIMATED,
-            ),
+            if (onset == null || wake == null) {
+                Tone.Sleep.noSleepDetail(shortDate(n.dateOfNight), source)
+            } else {
+                Tone.Patterns.sleepDetail(shortDate(n.dateOfNight), clockText(onset, n.utcOffsetMinutes), clockText(wake, n.utcOffsetMinutes), source)
+            },
         )
     }
     Text(Tone.Patterns.SLEEP_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+    if (slept.any { it.noSleep }) Text(Tone.Sleep.CHART_NO_SLEEP, style = MaterialTheme.typography.bodySmall, color = muted)
 }
 
 private val NightLabelsKey = ExtraStore.Key<List<String>>()

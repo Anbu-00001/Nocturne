@@ -61,9 +61,19 @@ class NocturneApp : Application(), CollectorHost {
     }
 
     /** The user's own sleep times for a night (spec §6.3): kept as entered, then every night is re-derived. */
-    fun saveSleepReport(nightDate: String, onsetTs: Long, wakeTs: Long, utcOffsetMinutes: Int) {
+    fun saveSleepReport(nightDate: String, onsetTs: Long, wakeTs: Long, utcOffsetMinutes: Int, sleepLatencyScore: Int? = null) {
         appScope.launch {
-            database.sleep().upsertReport(SleepReportEntity(nightDate, onsetTs, wakeTs, utcOffsetMinutes, System.currentTimeMillis()))
+            database.sleep().upsertReport(
+                SleepReportEntity(nightDate, onsetTs, wakeTs, utcOffsetMinutes, System.currentTimeMillis(), sleepLatencyScore = sleepLatencyScore),
+            )
+            harvester.recomputeNights()
+        }
+    }
+
+    /** "I did not sleep": the night stays sleepless through every recompute and teaches no corrective offset. */
+    fun saveNoSleepReport(nightDate: String, utcOffsetMinutes: Int) {
+        appScope.launch {
+            database.sleep().upsertReport(SleepReportEntity(nightDate, 0, 0, utcOffsetMinutes, System.currentTimeMillis(), noSleep = true))
             harvester.recomputeNights()
         }
     }

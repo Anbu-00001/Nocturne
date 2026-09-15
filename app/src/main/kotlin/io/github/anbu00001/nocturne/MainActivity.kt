@@ -9,7 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.PrimaryTabRow
+import androidx.compose.material3.PrimaryScrollableTabRow
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
@@ -22,6 +22,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import io.github.anbu00001.nocturne.collector.LightService
 import io.github.anbu00001.nocturne.tone.Tone
@@ -80,6 +81,7 @@ private fun NocturneRoot(app: NocturneApp) {
     }
 }
 
+/** Four tabs do not fit a 6.5-inch phone at full label width ("Last night" wrapped on the A18), so the row scrolls. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun MainTabs(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolean) {
@@ -87,9 +89,9 @@ private fun MainTabs(app: NocturneApp, usageAccess: Boolean, batteryExempt: Bool
     val titles = listOf(Tone.Nav.TONIGHT, Tone.Nav.LAST_NIGHT, Tone.Nav.PATTERNS, Tone.Nav.SETTINGS)
     Scaffold(
         topBar = {
-            PrimaryTabRow(selectedTabIndex = tab, modifier = Modifier.statusBarsPadding()) {
+            PrimaryScrollableTabRow(selectedTabIndex = tab, modifier = Modifier.statusBarsPadding(), edgePadding = 0.dp) {
                 titles.forEachIndexed { index, title ->
-                    Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title) })
+                    Tab(selected = tab == index, onClick = { tab = index }, text = { Text(title, maxLines = 1) })
                 }
             }
         },

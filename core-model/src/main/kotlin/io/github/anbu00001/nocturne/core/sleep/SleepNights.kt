@@ -8,8 +8,10 @@ import java.time.temporal.TemporalAdjusters
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** The user's own "I slept about X to Y" (spec §6.3). Primary data: kept, never derived. */
-data class SleepReport(val date: LocalDate, val onsetTs: Long, val wakeTs: Long)
+/** The user's own "I slept about X to Y" (spec §6.3), or "I did not sleep" with both times null. Primary data: kept, never derived. */
+data class SleepReport(val date: LocalDate, val onsetTs: Long?, val wakeTs: Long?) {
+    val noSleep: Boolean get() = onsetTs == null || wakeTs == null
+}
 
 /** A session with the UTC offset captured for its own start. */
 data class OffsetSession(val session: NightSession, val offsetMinutes: Int)
@@ -25,12 +27,16 @@ data class NightSleep(
     val confidence: Double,
     val source: SleepSource,
     val interruptions: Int,
+    /** No sleep this night: the user said so, or the inference found none. [onsetTs] and [wakeTs] are then null. */
+    val noSleep: Boolean = false,
 ) {
     /** Priors learn from the user's word or the raw inference, never a corrected value that would feed back on itself. */
-    internal val priorOnsetTs: Long? get() = report?.onsetTs ?: inferred?.onsetTs
-    internal val priorWakeTs: Long? get() = report?.wakeTs ?: inferred?.wakeTs
+    internal val priorOnsetTs: Long? get() = if (report != null) report.onsetTs else inferred?.takeUnless { it.noSleep }?.onsetTs
+    internal val priorWakeTs: Long? get() = if (report != null) report.wakeTs else inferred?.takeUnless { it.noSleep }?.wakeTs
 
-    internal fun usable(config: SleepConfig) = report != null || (inferred != null && inferred.confidence >= config.confidentAt)
+    /** A sleepless night says nothing about when the user usually sleeps, so it never feeds priors or the window. */
+    internal fun usable(config: SleepConfig) =
+        if (report != null) !report.noSleep else inferred != null && !inferred.noSleep && inferred.confidence >= config.confidentAt
 }
 
 /**
@@ -42,12 +48,18 @@ data class CorrectiveOffsets(val onsetMs: Long, val wakeMs: Long, val nights: In
         val NONE = CorrectiveOffsets(0, 0, 0)
 
         fun from(nights: List<NightSleep>, config: SleepConfig): CorrectiveOffsets {
-            val pairs = nights.mapNotNull { n -> n.report?.let { r -> n.inferred?.let { i -> r to i } } }
+            // Only nights where both the user and the inference describe a sleep can say how far apart they are.
+            val pairs = nights.mapNotNull { n ->
+                val onset = n.report?.onsetTs
+                val wake = n.report?.wakeTs
+                val inferred = n.inferred?.takeUnless { it.noSleep }
+                if (onset != null && wake != null && inferred != null) Triple(onset, wake, inferred) else null
+            }
             if (pairs.size < config.minCorrectionNights) return NONE
             fun clamp(ms: Double) = ms.toLong().coerceIn(-config.maxCorrectionMs, config.maxCorrectionMs)
             return CorrectiveOffsets(
-                onsetMs = clamp(median(pairs.map { (r, i) -> (r.onsetTs - i.onsetTs).toDouble() })),
-                wakeMs = clamp(median(pairs.map { (r, i) -> (r.wakeTs - i.wakeTs).toDouble() })),
+                onsetMs = clamp(median(pairs.map { (onset, _, i) -> (onset - i.onsetTs).toDouble() })),
+                wakeMs = clamp(median(pairs.map { (_, wake, i) -> (wake - i.wakeTs).toDouble() })),
                 nights = pairs.size,
             )
         }
@@ -151,13 +163,31 @@ object SleepNights {
     internal fun finalise(night: NightSleep, offsets: CorrectiveOffsets, sessions: List<NightSession>, config: SleepConfig): NightSleep {
         val report = night.report
         val inferred = night.inferred
+        val reportedOnset = report?.onsetTs
+        val reportedWake = report?.wakeTs
         return when {
-            report != null -> night.copy(
-                onsetTs = report.onsetTs,
-                wakeTs = report.wakeTs,
+            report != null && reportedOnset != null && reportedWake != null -> night.copy(
+                onsetTs = reportedOnset,
+                wakeTs = reportedWake,
                 confidence = 1.0,
                 source = SleepSource.USER_REPORTED,
-                interruptions = interruptionsBetween(sessions, report.onsetTs, report.wakeTs, config),
+                interruptions = interruptionsBetween(sessions, reportedOnset, reportedWake, config),
+            )
+            report != null -> night.copy(
+                onsetTs = null,
+                wakeTs = null,
+                confidence = 1.0,
+                source = SleepSource.USER_REPORTED,
+                interruptions = 0,
+                noSleep = true,
+            )
+            inferred != null && inferred.noSleep -> night.copy(
+                onsetTs = null,
+                wakeTs = null,
+                confidence = inferred.noSleepProbability,
+                source = SleepSource.INFERRED,
+                interruptions = 0,
+                noSleep = true,
             )
             inferred != null -> {
                 val onset = inferred.onsetTs + offsets.onsetMs

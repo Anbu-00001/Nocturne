@@ -4,13 +4,16 @@ import io.github.anbu00001.nocturne.core.glance.SessionKind
 import io.github.anbu00001.nocturne.core.glance.WakeTrigger
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import java.time.LocalDate
+import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /** Bump when sleep inference changes; the app then re-derives every night (spec §5). */
-const val SLEEP_MODEL_VERSION = 1
+const val SLEEP_MODEL_VERSION = 2
 
 /** One screen session as sleep inference sees it. */
 data class NightSession(
@@ -61,6 +64,12 @@ data class SleepConfig(
     /** Spec §6.3 plausible onset window, local time. */
     val onsetEarliestMinute: Int = 20 * 60,
     val onsetLatestMinute: Int = 6 * 60,
+    /**
+     * When the night itself looks sleepless, onsets from [onsetLatestMinute] up to this are searched too: the sleep
+     * that follows a night spent awake starts in the morning (the A18, night of 14 Sept). Only then, so a quiet
+     * morning or afternoon never replaces an ordinary night's sleep.
+     */
+    val afterNoSleepOnsetLatestMinute: Int = 12 * 60,
     /** Each night is scored from 18:00 on its evening to 16:00 the next day. */
     val windowStartHour: Int = 18,
     val windowEndHour: Int = 16,
@@ -73,11 +82,26 @@ data class SleepConfig(
     val awakeFloorPerHour: Double = 0.5,
     val typicalDurationMin: Double = 7.5 * 60,
     val typicalDurationSdMin: Double = 2.0 * 60,
+    /**
+     * Prior probability that a night holds no sleep at all. All-nighters are common over a student's years (60% of
+     * students report at least one; Thacher, Behav Sleep Med 2008) but rare on any one night.
+     */
+    val noSleepPrior: Double = 0.03,
+    /**
+     * The other explanation for a quiet stretch is the user awake away from the phone, taken as exponentially
+     * distributed with this mean. An assumption, not a finding: several quiet hours while awake are uncommon.
+     */
+    val awayMeanHours: Double = 2.0,
     /** phone-sleep-tracker's approach: median and MAD over the trailing two weeks. */
     val priorNights: Int = 14,
     val minPriorNights: Int = 7,
     val minOnsetSdMin: Double = 45.0,
     val minDurationSdMin: Double = 60.0,
+    /**
+     * Around the user's own onset and duration the priors are Student-t with these degrees of freedom. A week of
+     * nights pins the centre well but says little about the tails, so an unusual night is unlikely, not ruled out.
+     */
+    val priorDegreesOfFreedom: Double = 4.0,
     /** An alternative this far from the best onset or wake counts as a competing explanation. */
     val alternativeSeparationMs: Long = 45 * LocalClock.MINUTE_MS,
     val marginScale: Double = 4.0,
@@ -94,7 +118,7 @@ data class SleepConfig(
 data class SleepEstimate(
     val onsetTs: Long,
     val wakeTs: Long,
-    /** 0..1. A heuristic, not a validated probability. */
+    /** 0..1. A heuristic, not a validated probability; already scaled by the chance that the night held sleep at all. */
     val confidence: Double,
     /** User-initiated sessions between onset and wake. */
     val interruptions: Int,
@@ -104,7 +128,17 @@ data class SleepEstimate(
     /** The best explanation at least [SleepConfig.alternativeSeparationMs] away, for a person to choose between. */
     val rivalOnsetTs: Long? = null,
     val rivalWakeTs: Long? = null,
-)
+    /**
+     * Log odds that the night held no sleep, against the best sleep explanation. Above zero the night looks
+     * sleepless, and [onsetTs] to [wakeTs] is only the quiet stretch that lost. Negative infinity when not assessed.
+     */
+    val noSleepLogOdds: Double = Double.NEGATIVE_INFINITY,
+) {
+    val noSleep: Boolean get() = noSleepLogOdds > 0
+
+    /** The weight of the no-sleep explanation, 0..1. */
+    val noSleepProbability: Double get() = 1 / (1 + exp(-noSleepLogOdds))
+}
 
 /** The user's recent sleep, as a soft prior for the next night. */
 data class PersonalPrior(
@@ -152,6 +186,8 @@ internal fun marksOf(sessions: List<NightSession>, config: SleepConfig): List<Ma
  * starts of later sessions, and the pair with the highest likelihood (plus soft priors on duration and,
  * after a week, on the user's usual onset) wins. A night-time check costs about as much as half an hour
  * of quiet, so brief checks stay inside the night and a three-hour awake spell does not.
+ *
+ * The winning quiet stretch is then weighed against a night with no sleep in it (see [noSleepLogOdds]).
  */
 class SleepInference(private val config: SleepConfig = SleepConfig()) {
 
@@ -166,14 +202,26 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
 
     fun infer(night: NightInput, prior: PersonalPrior?): SleepEstimate? {
         val midnight = localMidnightUtc(night.date, night.offsetMinutes)
-        val windowStart = midnight + config.windowStartHour * LocalClock.HOUR_MS
-        val windowEnd = midnight + LocalClock.DAY_MS + config.windowEndHour * LocalClock.HOUR_MS
         val onsetFrom = midnight + config.onsetEarliestMinute * LocalClock.MINUTE_MS
         val onsetTo = midnight + LocalClock.DAY_MS + config.onsetLatestMinute * LocalClock.MINUTE_MS
 
         // No estimate for a night the history does not reach back to, or one still under way: until the
         // history passes the latest plausible onset, the user may simply still be up.
         if (night.dataFromTs > onsetFrom || night.dataToTs < onsetTo) return null
+        val overnight = search(night, prior, onsetFrom, onsetTo, edgeOnset = true) ?: return null
+        if (!overnight.noSleep) return overnight
+
+        // The night looks sleepless. The sleep after a night awake starts in the morning, so look there before
+        // settling on no sleep; a morning stretch that also looks more like time away changes nothing.
+        val lateTo = midnight + LocalClock.DAY_MS + config.afterNoSleepOnsetLatestMinute * LocalClock.MINUTE_MS
+        return search(night, prior, onsetTo, lateTo, edgeOnset = false)?.takeUnless { it.noSleep } ?: overnight
+    }
+
+    /** The best sleep with its onset in [onsetFrom, onsetTo], or null when no stretch qualifies. */
+    private fun search(night: NightInput, prior: PersonalPrior?, onsetFrom: Long, onsetTo: Long, edgeOnset: Boolean): SleepEstimate? {
+        val midnight = localMidnightUtc(night.date, night.offsetMinutes)
+        val windowStart = midnight + config.windowStartHour * LocalClock.HOUR_MS
+        val windowEnd = midnight + LocalClock.DAY_MS + config.windowEndHour * LocalClock.HOUR_MS
         val searchEnd = minOf(windowEnd, night.dataToTs)
         val marks = marksOf(night.sessions, config).filter { it.startTs in windowStart until searchEnd }
         if (marks.isEmpty()) return null
@@ -185,12 +233,10 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
             weakBefore[i + 1] = weakBefore[i] + if (m.evidence == Evidence.WEAK) 1 else 0
         }
         val windowHours = (searchEnd - windowStart).toDouble() / LocalClock.HOUR_MS
-        val durationMean = prior?.durationMin ?: config.typicalDurationMin
-        val durationSd = prior?.durationSdMin ?: config.typicalDurationSdMin
 
         val candidates = ArrayList<Candidate>()
         val onsets = marks.map { it.activeEndTs }.filter { it in onsetFrom..minOf(onsetTo, searchEnd) }.distinct().map { it to true } +
-            (onsetFrom to false)
+            (if (edgeOnset) listOf(onsetFrom to false) else emptyList())
         for ((onset, onsetAnchored) in onsets) {
             val latestWake = minOf(windowEnd, onset + config.maxSleepMs)
             // Only claim "still asleep at the edge" if the history actually reaches that edge.
@@ -214,10 +260,8 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
                     poisson(weakIn, config.asleepWeakPerHour, sleepHours) +
                     poisson(strongOut, max(strongOut / awakeHours, config.awakeFloorPerHour), awakeHours) +
                     poisson(weakOut, max(weakOut / awakeHours, config.awakeFloorPerHour), awakeHours)
-                score -= square((sleepHours * 60 - durationMean) / durationSd) / 2
-                if (prior != null) {
-                    score -= square((minutesSinceNoon(onset, night.offsetMinutes) - prior.onsetMinutesSinceNoon) / prior.onsetSdMin) / 2
-                }
+                score += durationPriorShape(sleepHours * 60, prior)
+                if (prior != null) score += onsetPriorShape(onset, night.offsetMinutes, prior)
                 candidates += Candidate(onset, wake, onsetAnchored, wakeAnchored, score, strongIn + weakIn)
             }
         }
@@ -226,21 +270,79 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
             .filter { abs(it.onset - best.onset) > config.alternativeSeparationMs || abs(it.wake - best.wake) > config.alternativeSeparationMs }
             .maxByOrNull { it.score }
 
+        val hours = (best.wake - best.onset).toDouble() / LocalClock.HOUR_MS
+        val noSleepLogOdds = noSleepLogOdds(
+            hours = hours,
+            onset = best.onset,
+            offsetMinutes = night.offsetMinutes,
+            prior = prior,
+            onsetRangeHours = (onsetTo - onsetFrom).toDouble() / LocalClock.HOUR_MS,
+            windowHours = windowHours,
+        )
         val margin = if (rival == null) 1.0 else 1 - exp(-(best.score - rival.score) / config.marginScale)
         val anchoring = (if (best.onsetAnchored) 1.0 else 0.5) * (if (best.wakeAnchored) 1.0 else 0.5)
-        val hours = (best.wake - best.onset).toDouble() / LocalClock.HOUR_MS
         val plausible = if (hours in 4.0..11.0) 1.0 else 0.6
         val consistency = prior?.let {
             val z = (minutesSinceNoon(best.onset, night.offsetMinutes) - it.onsetMinutesSinceNoon) / it.onsetSdMin
             0.5 + 0.5 * exp(-z * z / 2)
         } ?: 0.8
         val charging = chargingShare(night.charging, best.onset, best.wake)?.let { 0.85 + 0.15 * it } ?: 1.0
-        val confidence = (margin * anchoring * plausible * consistency * charging).coerceIn(0.0, 1.0)
+        val sleptProbability = 1 / (1 + exp(noSleepLogOdds))
+        val confidence = (margin * anchoring * plausible * consistency * charging * sleptProbability).coerceIn(0.0, 1.0)
 
         return SleepEstimate(
             best.onset, best.wake, confidence, best.inside, best.onsetAnchored, best.wakeAnchored, rival?.onset, rival?.wake,
+            noSleepLogOdds,
         )
     }
+
+    /**
+     * Was the best quiet stretch sleep, or the user awake away from the phone (at a laptop, say) on a night with no
+     * sleep? The phone saw the same quiet either way, so its likelihood cancels and only the priors decide: sleep
+     * of this length starting then, against an away stretch of this length anywhere in the window. The duration
+     * spread is never narrower than the population's, so a genuinely short night is not taken for no sleep.
+     */
+    private fun noSleepLogOdds(
+        hours: Double,
+        onset: Long,
+        offsetMinutes: Int,
+        prior: PersonalPrior?,
+        onsetRangeHours: Double,
+        windowHours: Double,
+    ): Double {
+        val durationMeanHours = (prior?.durationMin ?: config.typicalDurationMin) / 60
+        val durationSdHours = maxOf(prior?.durationSdMin ?: 0.0, config.typicalDurationSdMin) / 60
+        val sleep = ln(1 - config.noSleepPrior) +
+            normalLogDensity(hours, durationMeanHours, durationSdHours) +
+            (prior?.let { onsetLogDensity(onset, offsetMinutes, it) } ?: -ln(onsetRangeHours))
+        val away = ln(config.noSleepPrior) - ln(config.awayMeanHours) - hours / config.awayMeanHours - ln(windowHours)
+        return away - sleep
+    }
+
+    /** Gaussian around the population's typical duration, or Student-t around the user's own. */
+    private fun durationPriorShape(minutes: Double, prior: PersonalPrior?): Double =
+        if (prior == null) {
+            -square((minutes - config.typicalDurationMin) / config.typicalDurationSdMin) / 2
+        } else {
+            studentShape((minutes - prior.durationMin) / prior.durationSdMin)
+        }
+
+    /** Student-t log density of the onset, per hour, around the user's usual onset. */
+    private fun onsetLogDensity(onset: Long, offsetMinutes: Int, prior: PersonalPrior): Double {
+        val nu = config.priorDegreesOfFreedom
+        return lnGamma((nu + 1) / 2) - lnGamma(nu / 2) - 0.5 * ln(nu * PI) - ln(prior.onsetSdMin / 60) +
+            onsetPriorShape(onset, offsetMinutes, prior)
+    }
+
+    private fun onsetPriorShape(onset: Long, offsetMinutes: Int, prior: PersonalPrior): Double =
+        studentShape((minutesSinceNoon(onset, offsetMinutes) - prior.onsetMinutesSinceNoon) / prior.onsetSdMin)
+
+    private fun studentShape(z: Double): Double {
+        val nu = config.priorDegreesOfFreedom
+        return -(nu + 1) / 2 * ln(1 + z * z / nu)
+    }
+
+    private fun normalLogDensity(x: Double, mean: Double, sd: Double) = -square((x - mean) / sd) / 2 - ln(sd * sqrt(2 * PI))
 
     private fun poisson(n: Int, ratePerHour: Double, hours: Double) = n * ln(ratePerHour) - ratePerHour * hours
 
@@ -262,6 +364,21 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
 }
 
 internal fun square(x: Double) = x * x
+
+/** ln Γ(x) for x > 0, by the Lanczos approximation (g = 7, 9 terms). */
+internal fun lnGamma(x: Double): Double {
+    if (x < 0.5) return ln(PI / sin(PI * x)) - lnGamma(1 - x)
+    val z = x - 1
+    var sum = LANCZOS[0]
+    for (i in 1 until LANCZOS.size) sum += LANCZOS[i] / (z + i)
+    val t = z + 7.5
+    return 0.5 * ln(2 * PI) + (z + 0.5) * ln(t) - t + ln(sum)
+}
+
+private val LANCZOS = doubleArrayOf(
+    0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7,
+)
 
 internal fun localMidnightUtc(date: LocalDate, offsetMinutes: Int): Long =
     date.toEpochDay() * LocalClock.DAY_MS - offsetMinutes * LocalClock.MINUTE_MS

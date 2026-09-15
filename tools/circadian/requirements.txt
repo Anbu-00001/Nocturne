@@ -1,0 +1,8 @@
+# Reference environment for hannay19_golden.py (Phase 3b golden files). Pinned: a golden file is only as
+# reproducible as the code that produced it. Laptop only; nothing here ships in the app.
+circadian==1.0.3
+numpy==2.5.3
+scipy==1.18.1
+pandas==3.0.5
+fastcore==2.2.27
+matplotlib==3.11.2

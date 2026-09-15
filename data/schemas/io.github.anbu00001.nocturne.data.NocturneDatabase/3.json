@@ -2,7 +2,7 @@
   "formatVersion": 1,
   "database": {
     "version": 3,
-    "identityHash": "7dae062469b199ee7e8e032830fb5070",
+    "identityHash": "f4db1b37c2192bf25e1704d501ac0d16",
     "entities": [
       {
         "tableName": "raw_events",
@@ -303,7 +303,7 @@
       },
       {
         "tableName": "nights",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`dateOfNight` TEXT NOT NULL, `estimatedSleepOnset` INTEGER, `estimatedWakeTime` INTEGER, `confidence` REAL NOT NULL, `source` TEXT NOT NULL, `eveningScreenMinutes` INTEGER NOT NULL, `postOnsetInterruptions` INTEGER NOT NULL, `modelledSuppressionPct` REAL, `suppressionLowPct` REAL, `suppressionHighPct` REAL, `modelledPhaseShiftMin` REAL, `melanopicDoseLuxHours` REAL, `inferredSleepOnset` INTEGER, `inferredWakeTime` INTEGER, `inferredConfidence` REAL NOT NULL DEFAULT 0, `utcOffsetMinutes` INTEGER NOT NULL DEFAULT 0, `eveningWindowStartMinute` INTEGER NOT NULL DEFAULT 1260, `eveningWindowEndMinute` INTEGER NOT NULL DEFAULT 420, `windowPersonalised` INTEGER NOT NULL DEFAULT 0, `windowNights` INTEGER NOT NULL DEFAULT 0, `lightScreenMinutes` INTEGER NOT NULL DEFAULT 0, `lightMeasuredMinutes` INTEGER NOT NULL DEFAULT 0, `suppressionDurationClamped` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`dateOfNight`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`dateOfNight` TEXT NOT NULL, `estimatedSleepOnset` INTEGER, `estimatedWakeTime` INTEGER, `confidence` REAL NOT NULL, `source` TEXT NOT NULL, `eveningScreenMinutes` INTEGER NOT NULL, `postOnsetInterruptions` INTEGER NOT NULL, `modelledSuppressionPct` REAL, `suppressionLowPct` REAL, `suppressionHighPct` REAL, `modelledPhaseShiftMin` REAL, `melanopicDoseLuxHours` REAL, `inferredSleepOnset` INTEGER, `inferredWakeTime` INTEGER, `inferredConfidence` REAL NOT NULL DEFAULT 0, `utcOffsetMinutes` INTEGER NOT NULL DEFAULT 0, `eveningWindowStartMinute` INTEGER NOT NULL DEFAULT 1260, `eveningWindowEndMinute` INTEGER NOT NULL DEFAULT 420, `windowPersonalised` INTEGER NOT NULL DEFAULT 0, `windowNights` INTEGER NOT NULL DEFAULT 0, `lightScreenMinutes` INTEGER NOT NULL DEFAULT 0, `lightMeasuredMinutes` INTEGER NOT NULL DEFAULT 0, `suppressionDurationClamped` INTEGER NOT NULL DEFAULT 0, `noSleep` INTEGER NOT NULL DEFAULT 0, `inferredNoSleep` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`dateOfNight`))",
         "fields": [
           {
             "fieldPath": "dateOfNight",
@@ -442,6 +442,20 @@
             "affinity": "INTEGER",
             "notNull": true,
             "defaultValue": "0"
+          },
+          {
+            "fieldPath": "noSleep",
+            "columnName": "noSleep",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "inferredNoSleep",
+            "columnName": "inferredNoSleep",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
           }
         ],
         "primaryKey": {
@@ -453,7 +467,7 @@
       },
       {
         "tableName": "sleep_reports",
-        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`dateOfNight` TEXT NOT NULL, `onsetTs` INTEGER NOT NULL, `wakeTs` INTEGER NOT NULL, `utcOffsetMinutes` INTEGER NOT NULL, `reportedAt` INTEGER NOT NULL, PRIMARY KEY(`dateOfNight`))",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`dateOfNight` TEXT NOT NULL, `onsetTs` INTEGER NOT NULL, `wakeTs` INTEGER NOT NULL, `utcOffsetMinutes` INTEGER NOT NULL, `reportedAt` INTEGER NOT NULL, `noSleep` INTEGER NOT NULL DEFAULT 0, `sleepLatencyScore` INTEGER, PRIMARY KEY(`dateOfNight`))",
         "fields": [
           {
             "fieldPath": "dateOfNight",
@@ -484,6 +498,18 @@
             "columnName": "reportedAt",
             "affinity": "INTEGER",
             "notNull": true
+          },
+          {
+            "fieldPath": "noSleep",
+            "columnName": "noSleep",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "sleepLatencyScore",
+            "columnName": "sleepLatencyScore",
+            "affinity": "INTEGER"
           }
         ],
         "primaryKey": {
@@ -732,7 +758,7 @@
     ],
     "setupQueries": [
       "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
-      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '7dae062469b199ee7e8e032830fb5070')"
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'f4db1b37c2192bf25e1704d501ac0d16')"
     ]
   }
 }
