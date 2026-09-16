@@ -7,6 +7,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 import io.github.anbu00001.nocturne.core.glance.SessionKind
 import io.github.anbu00001.nocturne.core.glance.WakeTrigger
+import io.github.anbu00001.nocturne.core.reflect.ReflectionSource
 import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.EveningWindow
 
@@ -242,18 +243,22 @@ data class PowerSampleEntity(
     val batteryPercent: Int,
 )
 
-/** Phase 3. User data, not derived: never wiped by recompute. */
+/** Phase 3. User data, not derived: never wiped by recompute. One row per phone-down gap asked about or labelled (spec §7). */
 @Entity(tableName = "reflections")
 data class ReflectionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** When the card was first shown, or for [ReflectionSource.BACKFILL] when the label was given. */
     val promptedAt: Long,
+    /** When the label was given or the card dismissed; null while neither. */
     val answeredAt: Long?,
     val gapStartTs: Long?,
     val gapEndTs: Long?,
-    /** Single tap, 1..4. Never required. */
+    /** Single tap, 1..4, a GapLabel's rating. Never required. */
     val rating: Int?,
     val note: String?,
     val dismissed: Boolean,
+    /** Schema 6. A card's prompt counts against the caps; a label from the weekly list does not. */
+    @ColumnInfo(defaultValue = "'PROMPT'") val source: ReflectionSource = ReflectionSource.PROMPT,
 )
 
 /** Phase 3. User data. */

@@ -3,7 +3,7 @@ package io.github.anbu00001.nocturne.data
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-/** Schema 4's raw_events, renamed and kept by [MIGRATION_4_5] for one release. The next schema change drops it. */
+/** Schema 4's raw_events, renamed and kept by [MIGRATION_4_5] for one release, and dropped by [MIGRATION_5_6]. */
 const val SCHEMA_FOUR_RAW_EVENTS = "raw_events_v4"
 
 /**
@@ -54,5 +54,17 @@ internal val MIGRATION_4_5 = object : Migration(4, 5) {
                    AND n.eventType = o.eventType AND c.packageName = o.packageName AND c.className = o.className)""",
         ).use { it.moveToFirst(); it.getLong(0) }
         check(lost == 0L) { "$lost raw events have no identical row after interning; staying at schema 4" }
+    }
+}
+
+/**
+ * Schema 6 (Phase 3a): reflections record whether a card asked or the weekly list was used, and schema 4's copy of
+ * raw_events goes. Schema 5 ran on the phone from 15 Sept with every event checked identical, and harvests have written
+ * only to the new table since. SQLite reuses the freed pages for new events; the file does not shrink.
+ */
+internal val MIGRATION_5_6 = object : Migration(5, 6) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL("ALTER TABLE `reflections` ADD COLUMN `source` TEXT NOT NULL DEFAULT 'PROMPT'")
+        db.execSQL("DROP TABLE IF EXISTS `$SCHEMA_FOUR_RAW_EVENTS`")
     }
 }

@@ -11,6 +11,7 @@ import io.github.anbu00001.nocturne.core.circadian.PhaseEstimator
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
 import io.github.anbu00001.nocturne.core.light.LightReading
 import io.github.anbu00001.nocturne.core.metrics.ActivityDay
+import io.github.anbu00001.nocturne.core.reflect.PhoneDownGaps
 import io.github.anbu00001.nocturne.core.sleep.SleepConfig
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.core.time.ZoneChange
@@ -99,6 +100,8 @@ class LiveDatabaseTest {
                     appendLine("model runs: ${room.metrics().latestRun()}")
                     appendLine()
                     appendPhases(room, nights)
+                    appendLine()
+                    appendGaps(room, nights)
                 },
             )
             lastJudged?.let { writeActivityMinutes(room, it) }
@@ -128,6 +131,25 @@ class LiveDatabaseTest {
                 val range = p.earliestTs?.let { "${clock(it)} to ${clock(p.latestTs!!)}" } ?: "none"
                 appendLine("  $name ${p.date}: habitual onset ${clock(p.habitualOnsetTs)}; $scenarios; plausible $range; settled ${p.settled}${p.dlmoTs?.let { ", DLMO ${clock(it)}" } ?: ""}")
             }
+        }
+    }
+
+    /** Spec §7 on the phone's history: how many phone-down gaps a day each minimum length would offer the card. */
+    private suspend fun StringBuilder.appendGaps(room: NocturneDatabase, nights: List<NightEntity>) {
+        val sessions = room.sessions().startingFrom(0).map { it.toNightSession() }
+        val quiet = quietIntervals(nights)
+        val config = SleepConfig(screenOffTimeoutMs = 30 * LocalClock.MINUTE_MS)
+        fun day(ts: Long) = LocalDate.ofEpochDay(Math.floorDiv(ts + 330 * LocalClock.MINUTE_MS, LocalClock.DAY_MS))
+        val days = sessions.map { day(it.startTs) }.distinct().sorted()
+        appendLine("phone-down gaps outside sleep and evening windows, per local day of their end (${days.size} days with sessions):")
+        for (minutes in listOf(30, 45, 60, 90, 120)) {
+            val gaps = PhoneDownGaps.find(sessions, quiet, config, minutes * LocalClock.MINUTE_MS)
+            val perDay = days.map { d -> gaps.count { day(it.endTs) == d } }
+            appendLine("  at least $minutes min: ${gaps.size} gaps; per day ${perDay.joinToString(" ")}; median ${perDay.sorted().getOrNull(perDay.size / 2)}")
+        }
+        fun clock(ts: Long) = Instant.ofEpochMilli(ts).atOffset(ZoneOffset.ofHoursMinutes(5, 30)).toLocalDateTime().toString().replace('T', ' ').take(16)
+        for (gap in PhoneDownGaps.find(sessions, quiet, config).takeLast(15)) {
+            appendLine("  60 min: ${clock(gap.startTs)} to ${clock(gap.endTs).takeLast(5)} (${gap.durationMs / LocalClock.MINUTE_MS} min)")
         }
     }
 

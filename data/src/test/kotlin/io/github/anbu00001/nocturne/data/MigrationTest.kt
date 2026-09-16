@@ -161,8 +161,36 @@ class MigrationTest {
             val added = room.rawEvents().insertAll(listOf(RawEvent(timestamp = 4_000, utcOffsetMinutes = 330, eventType = 1, packageName = "com.example", className = "A")))
             org.junit.Assert.assertTrue("$added", added.single() > before.maxOf { it.id })
             assertEquals(4, count("event_components"))
-            // Schema 4's table stays for one release, untouched.
-            assertEquals(5, count(SCHEMA_FOUR_RAW_EVENTS))
+            // Schema 4's table stayed for one release; schema 6 drops it.
+            assertEquals(0, room.openHelper.readableDatabase.query("SELECT COUNT(*) FROM sqlite_master WHERE name = '$SCHEMA_FOUR_RAW_EVENTS'").use { it.moveToFirst(); it.getInt(0) })
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun schemaFiveMigratesToSixMarkingEveryReflectionAPromptAndDroppingTheOldEvents() = runTest {
+        val file = freshFile("migration-test-5.db")
+        createSchema(file, version = 5) { db ->
+            db.execSQL("INSERT INTO event_components (id, packageName, className) VALUES (1, 'android', '')")
+            db.execSQL("INSERT INTO raw_events (id, timestamp, utcOffsetMinutes, eventType, componentId) VALUES (1, 1000, 330, 15, 1)")
+            db.execSQL("CREATE TABLE $SCHEMA_FOUR_RAW_EVENTS (id INTEGER PRIMARY KEY, timestamp INTEGER, utcOffsetMinutes INTEGER, eventType INTEGER, packageName TEXT, className TEXT)")
+            db.execSQL("INSERT INTO $SCHEMA_FOUR_RAW_EVENTS VALUES (1, 1000, 330, 15, 'android', '')")
+            db.execSQL(
+                """INSERT INTO reflections (promptedAt, answeredAt, gapStartTs, gapEndTs, rating, note, dismissed)
+                   VALUES (5000, 6000, 1000, 4000, 2, NULL, 0)""",
+            )
+            db.execSQL("INSERT INTO focus_blocks (startTs, endTs, plannedMinutes, completed, interruptionCount, label) VALUES (1, 2, 25, 1, 3, NULL)")
+        }
+
+        val room = open(file)
+        try {
+            assertEquals(listOf(RawEvent(1, 1000, 330, 15, "android", "")), room.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 10))
+            val reflection = room.reflections().since(0).single()
+            assertEquals(io.github.anbu00001.nocturne.core.reflect.ReflectionSource.PROMPT, reflection.source)
+            assertEquals(2, reflection.rating)
+            assertEquals(3, room.focus().all().single().interruptionCount)
+            assertEquals(0, room.openHelper.readableDatabase.query("SELECT COUNT(*) FROM sqlite_master WHERE name = '$SCHEMA_FOUR_RAW_EVENTS'").use { it.moveToFirst(); it.getInt(0) })
         } finally {
             room.close()
         }

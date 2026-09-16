@@ -2,6 +2,7 @@ package io.github.anbu00001.nocturne.tone
 
 import io.github.anbu00001.nocturne.core.glance.SessionKind
 import io.github.anbu00001.nocturne.core.metrics.MetricKey
+import io.github.anbu00001.nocturne.core.reflect.GapLabel
 
 /**
  * Every user-facing sentence in Nocturne, in one place so it can be audited as a unit
@@ -39,7 +40,65 @@ object Tone {
         const val TONIGHT = "Tonight"
         const val LAST_NIGHT = "Last night"
         const val PATTERNS = "Patterns"
+        const val FOCUS = "Focus"
         const val SETTINGS = "Settings"
+    }
+
+    /** Spec §7: one question, four taps, no text field unless asked for. */
+    object Reflect {
+        fun phoneDown(from: String, to: String) = "Phone was down $from to $to"
+        fun label(label: GapLabel): String = when (label) {
+            GapLabel.DEEP_WORK -> "Deep work"
+            GapLabel.LIGHT_WORK -> "Light work"
+            GapLabel.REST -> "Rest"
+            GapLabel.NOT_SURE -> "Not sure"
+        }
+        const val DISMISS = "Dismiss"
+        fun labelled(label: String) = "Labelled $label"
+        const val ADD_NOTE = "Add a note"
+        const val NOTE_FIELD = "Note"
+        const val SAVE_NOTE = "Save note"
+        const val DONE = "Done"
+
+        const val WEEK = "Phone-down gaps, last 7 days"
+        const val WEEK_NOTE =
+            "A gap is an hour or more without unlocking the phone, outside sleep and the evening window. Lock-screen glances do not end one."
+        fun labelledTime(label: String, duration: String) = "$label: $duration"
+        fun unlabelled(count: Int) = if (count == 1) "1 gap has no label" else "$count gaps have no label"
+        const val ALL_LABELLED = "Every gap this week has a label or was dismissed."
+        const val SHOW_UNLABELLED = "Label them"
+        const val HIDE_UNLABELLED = "Hide"
+        fun gapLine(day: String, from: String, to: String, duration: String) = "$day, $from to $to ($duration)"
+    }
+
+    /** Spec §7, "Pomodoro / focus timer". Interruptions are reported flatly, without commentary. */
+    object Focus {
+        const val FOCUS_LENGTH = "Focus length"
+        const val BREAK_LENGTH = "Break length"
+        fun minutes(count: Int) = "$count min"
+        const val START_FOCUS = "Start focus"
+        const val START_BREAK = "Start break"
+        const val STOP = "Stop"
+        const val FOCUS_RUNNING = "Focus"
+        const val BREAK_RUNNING = "Break"
+        fun endsAt(clock: String) = "Ends at $clock"
+        const val INEXACT =
+            "Android has not allowed exact alarms for Nocturne, so the end of a block may be signalled a few minutes late."
+
+        fun unlocks(count: Int) = if (count == 1) "1 unlock" else "$count unlocks"
+        fun week(blocks: Int, unlocks: Int) =
+            (if (blocks == 1) "Last 7 days: 1 focus block, " else "Last 7 days: $blocks focus blocks, ") + "${unlocks(unlocks)} during them"
+        const val HISTORY = "Recent blocks"
+        const val NO_BLOCKS = "No focus blocks yet."
+        fun block(day: String, time: String, duration: String, unlocks: Int, completed: Boolean) =
+            "$day $time, $duration" + (if (completed) "" else ", stopped early") + ", ${unlocks(unlocks)}"
+        const val COUNT_NOTE =
+            "Unlocks come from Android's usage events and are recounted at every harvest, so a count can change shortly after a block ends."
+
+        const val CHANNEL_NAME = "Focus timer"
+        const val CHANNEL_DESCRIPTION = "The end of a focus block or break you started."
+        fun focusEnded(duration: String, unlocks: Int) = "Focus block of $duration ended, ${unlocks(unlocks)} during it"
+        fun breakEnded(duration: String) = "Break of $duration ended"
     }
 
     object Tonight {
@@ -300,7 +359,8 @@ object Tone {
         const val WIPE = "Delete all data"
         const val WIPE_TITLE = "Delete all data?"
         const val WIPE_BODY =
-            "This removes every harvested event, light sample, derived session and night, and any sleep times you entered, " +
+            "This removes every harvested event, light sample, derived session and night, and any sleep times, gap labels " +
+                "and focus blocks you entered, " +
                 "from this phone. Android still holds roughly the last 10 days of events, and the next harvest copies those " +
                 "back. Light samples cannot be recovered."
         const val CANCEL = "Cancel"

@@ -181,6 +181,57 @@ interface SessionDao {
 
     @Query("SELECT COUNT(*) FROM sessions")
     suspend fun count(): Long
+
+    /** Unlocks beginning in [fromTs, toTs): a focus block's interruptions (spec §7). */
+    @Query("SELECT startTs FROM sessions WHERE unlocked AND startTs >= :fromTs AND startTs < :toTs ORDER BY startTs")
+    suspend fun unlockStartsBetween(fromTs: Long, toTs: Long): List<Long>
+}
+
+@Dao
+interface ReflectionDao {
+    @Insert
+    suspend fun insert(reflection: ReflectionEntity): Long
+
+    /** Rows asked or labelled since [sinceTs], and older rows about gaps that ended since then. */
+    @Query("SELECT * FROM reflections WHERE promptedAt >= :sinceTs OR gapEndTs >= :sinceTs ORDER BY promptedAt, id")
+    suspend fun since(sinceTs: Long): List<ReflectionEntity>
+
+    @Query("SELECT * FROM reflections WHERE id = :id")
+    suspend fun byId(id: Long): ReflectionEntity?
+
+    @Query("UPDATE reflections SET rating = :rating, answeredAt = :answeredAt WHERE id = :id")
+    suspend fun answer(id: Long, rating: Int, answeredAt: Long)
+
+    @Query("UPDATE reflections SET dismissed = 1, answeredAt = :answeredAt WHERE id = :id")
+    suspend fun dismiss(id: Long, answeredAt: Long)
+
+    @Query("UPDATE reflections SET note = :note WHERE id = :id")
+    suspend fun note(id: Long, note: String?)
+
+    @Query("SELECT COUNT(*) FROM reflections")
+    fun observeCount(): Flow<Int>
+}
+
+@Dao
+interface FocusDao {
+    @Insert
+    suspend fun insert(block: FocusBlockEntity): Long
+
+    @Query("SELECT * FROM focus_blocks ORDER BY startTs DESC LIMIT :limit")
+    fun observeRecent(limit: Int): Flow<List<FocusBlockEntity>>
+
+    @Query("SELECT * FROM focus_blocks ORDER BY startTs")
+    suspend fun all(): List<FocusBlockEntity>
+
+    /**
+     * Interruptions are derived from sessions, so they follow every re-derivation of sessions: a block's count is
+     * always the unlocks beginning inside it as sessions stand now. A few blocks a day, each an index range on sessions.
+     */
+    @Query(
+        """UPDATE focus_blocks SET interruptionCount = (
+               SELECT COUNT(*) FROM sessions s WHERE s.unlocked AND s.startTs >= focus_blocks.startTs AND s.startTs < focus_blocks.endTs)""",
+    )
+    suspend fun recount()
 }
 
 @Dao
@@ -193,6 +244,9 @@ interface SleepDao {
 
     @Query("SELECT * FROM nights ORDER BY dateOfNight")
     suspend fun nights(): List<NightEntity>
+
+    @Query("SELECT * FROM nights WHERE dateOfNight >= :fromDate ORDER BY dateOfNight")
+    suspend fun nightsFrom(fromDate: String): List<NightEntity>
 
     @Query("SELECT * FROM nights WHERE dateOfNight = :date")
     fun observeNight(date: String): Flow<NightEntity?>

@@ -16,7 +16,7 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 | 2c | Sleep inference against 14 hand-labelled nights, ≥80% of onsets within 30 min | 📱 | 5 confirmed nights, all exact (Wed 9 and Fri 11 entered on the phone 16 Sept); 14 Sept labelled from memory and marked uncertain |
 | 2.5 / 2.6 | Regularity metrics, schema 4 with `window_metrics` and `model_runs` (NOCTURNE_ANALYTICS.md) | 📱 verify | installed on the A18 2026-09-15 15:26 |
 | 2.5c / 2.7 | Screen-use figures checked against sleep inference and nparACT; raw event names interned (schema 5) | 📱 verify | installed on the A18 2026-09-15 16:35 |
-| 3a | μEMA reflection cards, focus timer with interruption count | 📱 | ready to start (see Phase 3 readiness) |
+| 3a | μEMA reflection cards, focus timer with interruption count | 📱 | built and tested on the laptop 2026-09-16 (schema 6, Focus tab); install waits for the phone and the pre-install check |
 | 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | port and synthetic golden files done 2026-09-16; phase estimator on the phone's history in LiveDatabaseTest; real-week golden file and any display wait for a week of light (22 Sept) |
 | 3c | Personal sensitivity fit, n ≥ 30 nights | 📱 | falling-asleep times collected from 2026-09-15; needs 30 nights with light |
 | 4 | ActivityWatch exporter on Ubuntu | laptop + 📱 export | |
@@ -37,7 +37,7 @@ Developer tools that read personal data. Keep every export and database copy out
   Add `NOCTURNE_SLEEP_LABELS=labels.csv` (lines like `2026-09-06,00:10,08:30`, or `2026-09-14,none,none` for a night without sleep, local time) for the §10 hit rate, plain and leave-one-out.
 - Check a schema change against the phone's real database before installing:
   copy `databases/nocturne.db` (plus `-wal`, `-shm`) off the phone with `adb exec-out run-as io.github.anbu00001.nocturne cat …`,
-  then `NOCTURNE_LIVE_DB=nocturne.db ./gradlew :data:testDebugUnitTest --tests '*LiveDatabaseTest*'` and read `data/build/live-database.txt`, which also lists the regularity windows for the latest night. It checks that every event survives a schema change unchanged and writes the latest week's screen-use minutes to `data/build/live-activity-minutes.txt`; move both out of the repository after use.
+  then `NOCTURNE_LIVE_DB=nocturne.db ./gradlew :data:testDebugUnitTest --tests '*LiveDatabaseTest*'` and read `data/build/live-database.txt`, which also lists the regularity windows for the latest night, and how many phone-down gaps a day each minimum length (30 to 120 min) would give the gap card. It checks that every event survives a schema change unchanged and writes the latest week's screen-use minutes to `data/build/live-activity-minutes.txt`; move both out of the repository after use.
 - Hannay19 and Forger99 reference trajectories (Phase 3b): `uv venv && uv pip install -r tools/circadian/requirements.txt`, then
   `python tools/circadian/hannay19_golden.py --light week.csv --out week.csv [--model Forger99] [--every 10]`, which writes the light it integrated, the states and the DLMO times.
   `--synthetic office|late --days 7` makes the synthetic schedules the core-model golden files come from (`core-model/src/test/resources/circadian`).
@@ -117,11 +117,33 @@ You did not sleep on the night of Sun 14 Sept, then slept in the morning. The ap
 - **On your history, nights of 12 to 14 Sept.** Your readings are far dimmer than the priors: a median of 8 lux in daylight hours and 0 lux after dark, over 650 samples. Under the population priors both models put DLMO 7 to 8 h before your habitual onset, around 19:30 to 20:00, which your sleep contradicts. Hannay19 with your own readings or a dim day puts it between 00:42 and 03:29; nights 12 and 13 settle at 01:35 and 01:52, night 14 does not. Forger99 settles no night (23:14 to 01:44 on 13 Sept). Night 13 settles exactly on the 2 h limit and the middle scenario falls just past the 7 h one, so these results are fragile.
 - **Not on screen.** The spec keeps §6.4 off the screen until the real-week golden test passes, and the estimate still leans on its assumptions. Next: the real-week golden file after 22 Sept, then comparing settled estimates with the sleep-based rule of thumb (DLMO 2 to 3 h before habitual onset) as nights accumulate.
 
+## Phase 3a: gap cards and the focus timer (2026-09-16)
+
+Built and tested on the laptop, not yet installed: the phone was not connected, and schema 6 needs the pre-install check on a fresh copy of its database first.
+
+- **The card.** One question about the latest phone-down gap, four labels (deep work, light work, rest, not sure), Dismiss, and a note only behind "Add a note", whose field never takes focus by itself. It sits above whichever tab is open and is looked for each time Nocturne comes to the front, after that visit's harvest. It is never a notification (rule 1).
+- **What a gap is.** From the last use of the phone to the next, at least 60 min. An unlock or a call is use; a lock-screen glance, an alarm or a wake the phone caused is not, since reading a notification does not end a stretch of work or rest. A screen left to time out was last used at its last touch, the same rule sleep inference uses. Gaps touching sleep or the evening window are never asked about (rule 6), and nothing is shown inside the evening window. The 60 min is a starting value: the live-database check now counts gaps a day at 30 to 120 min on the phone's own history, to be read before install.
+- **The caps.** At most one prompt in 3 h and four in a local day, counted in code (rule 2). A card left unanswered stays for up to 3 h, then gives way and its gap goes to the weekly list. A dismissed or labelled gap never comes back (rule 3). A card asks about gaps that ended in the last 12 h.
+- **The weekly list.** Patterns shows the week's labelled time and "N gaps have no label" behind "Label them" (rule 5). Labels given there are stored as `BACKFILL` and do not count against the caps, so the answer rate of cards can be read on its own: reflections record when each card was first shown, when it was answered or dismissed, and where the label came from.
+- **Why an in-app card first, not a widget.** One-tap prompts get answered more than multi-question ones because of the microinteraction itself, not the device (Ponnada et al., IMWUT 2017), and the advantage held over 12 months, at 1.5 to 2.3 times the answer rate (Longitudinal μEMA engagement, IMWUT 2025). Prompts tied to unlocking felt less intrusive than reminders and were answered more often (Zhang et al., unlock journaling, 2016). Android lets an app draw on the lock screen or at unlock only with an overlay or a notification, both of which the spec rules out. A home-screen widget (Jetpack Glance 1.2.0 is stable) would be seen at unlock without interrupting; it is the fallback if cards are rarely answered after two weeks, measured from the reflections table rather than guessed now.
+- **The timer.** 15, 25, 45 or 60 min of focus and 5, 10 or 15 min of break, 25 and 5 by default. The end is an exact alarm, not a running service: `USE_EXACT_ALARM` is granted at install from Android 13 (Google Play limits it to timer and alarm apps; Nocturne is not on Play), `SCHEDULE_EXACT_ALARM` covers Android 12 and earlier, and without either the alarm falls back to an inexact one and the tab says so. `setExactAndAllowWhileIdle` fires in Doze and the timer survives the process being killed; a reboot clears alarms, so the app finishes or re-arms the timer when it next starts. A `shortService` foreground service would be stopped after 3 min.
+- **The signal.** A vibration marked as an alarm, since Android ignores other vibrations from a background app, plus the notification sound, which follows silent mode. If notifications are allowed, a quiet notification then states the block's unlocks. A timer that ended while the phone was off is recorded without buzzing.
+- **Interruptions.** Unlocks that begin inside a block, read from sessions after a harvest at the block's end. Counts are recomputed at every harvest and recompute, like every other derived figure. A block stopped early is recorded as stopped at that moment; breaks are not recorded.
+- **Schema 6.** `reflections.source` (PROMPT or BACKFILL; existing rows are prompts) and schema 4's `raw_events_v4` copy dropped, as planned. SQLite reuses the freed pages for new events; the file does not shrink.
+- **ColorOS risk.** ColorOS can delay third-party alarms under its own sleep standby optimisation and background freezing. The battery exemption from onboarding should cover it; the phone check below times a real block with the screen off.
+
+Phone checks for 3a, after install:
+
+- Pre-install: LiveDatabaseTest on a fresh copy (schema 5 to 6, every event unchanged), read the gap counts a day, save a rollback APK and a database backup.
+- A 15 min focus block with the screen off and the phone still: the vibration comes within a minute of the end, and the count matches the unlocks made during it.
+- Open Nocturne after an hour or more without unlocking, outside the evening window: one card; open it again within 3 h: the same card or none; inside the evening window: none.
+- Patterns: the weekly list and labelled time.
+
 ## Phase 3 readiness
 
 What each step needs, and what is already in place.
 
-- **3a μEMA cards and focus timer.** Needs phone-down gaps (derivable from sessions today), the one-tap card, the caps (1 per 3 h, 4 a day, never in the evening window) and interruption counts from raw_events unlocks. The reflections and focus_blocks tables have existed since schema 1. Design risk: the spec forbids notifications, so a card can only appear when you open Nocturne; response rates depend on how often that is, and dismissals are recorded as signal.
+- **3a μEMA cards and focus timer.** Built 16 Sept; see "Phase 3a" above. The design risk stands: the spec forbids notifications, so a card can only appear when you open Nocturne. Answer rates are now recorded, with a widget as the planned fallback.
 - **3b Hannay19 port.** `tools/circadian/hannay19_golden.py` runs Arcascope `circadian` 1.0.3 (pinned in `requirements.txt`) and writes every state at full precision; a synthetic week gives identical output on re-runs. What the port must copy exactly: fixed-step RK4 with light held over each step, the step from t[i-1] to t[i] using the light at t[i], photopic lux with alpha = 0.05·I^1.5/(I^1.5 + 9325), the default initial condition for 16L:8D at midnight, and DLMO = CBTmin − 7 h. Risks to resolve in 3b: the phone measures light only while the screen is on, so daylight is missing from a phone-only series (sleep can stand in as darkness, awake hours need a stated prior); the model takes photopic lux while §6.1 produces melanopic EDI, so the conversion is an explicit assumption; published accuracy is about ±1 h against lab DLMO.
 - **3c personal sensitivity fit.** Needs at least 30 nights with both modelled suppression (light on since 15 Sept) and your falling-asleep band (collected from 15 Sept). Earliest around mid-October if you answer most mornings.
 
@@ -227,6 +249,15 @@ Phase 2b:
 - **Service starts follow Android's background rules.** Android 15 still lets `specialUse` start from BOOT_COMPLETED (only camera, dataSync, mediaPlayback, mediaProjection, microphone and phoneCall are barred); the harvester's runs rely on the battery-optimisation exemption; a refused start is recorded, never thrown.
 - **Notification permission is optional.** Since Android 13 a foreground service runs without it and is listed under active apps instead of in the notification shade.
 - **Schema 3 was amended before its first install** with the no-sleep and falling-asleep columns, so the phone went from 2 to 3 once.
+
+Phase 3a:
+
+- **A gap ends at an unlock or a call, not at a lock-screen glance.** The spec does not say what "phone was down" means; reading a notification without unlocking does not end a stretch of work or rest.
+- **No card inside sleep or the evening window, and none about a gap touching them.** Rule 6 forbids prompts in the window; a gap that runs into sleep is sleep's business.
+- **The card is looked for when Nocturne comes to the front**, not on every unlock: without an overlay or a notification an app cannot show anything at unlock.
+- **Labels from the weekly list do not count against the caps**, and are stored apart, so the answer rate of cards can be measured.
+- **The focus timer's end is signalled.** The spec's no-notification rule is about prompts; a timer the user started has to say when it is done. It vibrates and plays the notification sound, and the notification itself is optional.
+- **Breaks are not recorded**; focus_blocks holds focus only, as schema 1 defined it.
 
 Analytics: see "Analytics layer" above.
 

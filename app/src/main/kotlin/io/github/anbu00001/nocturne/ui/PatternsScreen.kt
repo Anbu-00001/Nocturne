@@ -118,6 +118,7 @@ fun PatternsScreen(app: NocturneApp) {
             )
             SleepChart(sleep)
             RegularitySection(regularity)
+            GapsSection(app)
             NightColumnChart(Tone.Patterns.GLANCES_PER_NIGHT, vm.glancesProducer, nights) { it.glances }
             NightColumnChart(Tone.Patterns.EVENING_MINUTES, vm.eveningProducer, nights) { it.eveningScreenMs / 60_000 }
         }

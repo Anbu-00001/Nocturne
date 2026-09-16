@@ -160,20 +160,20 @@ internal data class Mark(val startTs: Long, val activeEndTs: Long, val evidence:
 internal fun marksOf(sessions: List<NightSession>, config: SleepConfig): List<Mark> {
     val sorted = sessions.sortedBy { it.startTs }
     return sorted.mapIndexedNotNull { i, s ->
-        val nextStart = sorted.getOrNull(i + 1)?.startTs ?: Long.MAX_VALUE
-        val idleMs = s.endTs - s.lastActivityTs
-        val tolerance = minOf(config.timeoutToleranceMs, config.screenOffTimeoutMs / 4)
-        val timedOut = config.screenOffTimeoutMs > 0 && idleMs >= config.screenOffTimeoutMs - tolerance
-        val activeEnd = if (timedOut && nextStart - s.endTs > config.quickRewakeMs) {
-            maxOf(s.lastActivityTs, s.endTs - config.screenOffTimeoutMs)
-        } else {
-            s.endTs
-        }
+        val activeEnd = activeEndOf(s, sorted.getOrNull(i + 1)?.startTs ?: Long.MAX_VALUE, config)
         val acted = s.unlocked || s.trigger == WakeTrigger.UNKNOWN || s.lastActivityTs - s.startTs > config.userActionMs
         if (!acted) return@mapIndexedNotNull null
         val evidence = if (s.unlocked && activeEnd - s.startTs >= config.strongMinActiveMs) Evidence.STRONG else Evidence.WEAK
         Mark(s.startTs, maxOf(activeEnd, s.startTs), evidence)
     }
+}
+
+/** When [s] was last in use: its end, or, if it ended by screen timeout and the phone stayed dark past [nextStartTs]'s quick re-wake, its last activity. */
+internal fun activeEndOf(s: NightSession, nextStartTs: Long, config: SleepConfig): Long {
+    val idleMs = s.endTs - s.lastActivityTs
+    val tolerance = minOf(config.timeoutToleranceMs, config.screenOffTimeoutMs / 4)
+    val timedOut = config.screenOffTimeoutMs > 0 && idleMs >= config.screenOffTimeoutMs - tolerance
+    return if (timedOut && nextStartTs - s.endTs > config.quickRewakeMs) maxOf(s.lastActivityTs, s.endTs - config.screenOffTimeoutMs) else s.endTs
 }
 
 /**

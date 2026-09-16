@@ -27,8 +27,8 @@ import io.github.anbu00001.nocturne.core.time.LocalClock
 import java.time.LocalDate
 
 /**
- * Sessions, nights and regularity windows are rebuilt together in one transaction, so no reader sees one without the
- * others, and every row written carries the model run in force (analytics §6.2).
+ * Sessions, nights, regularity windows and focus blocks' interruption counts are rebuilt together in one transaction, so
+ * no reader sees one without the others, and every row written carries the model run in force (analytics §6.2).
  */
 class DerivedTables(
     private val db: NocturneDatabase,
@@ -47,6 +47,7 @@ class DerivedTables(
             val run = run(sleep)
             val written = sessions.recomputeFrom(changedFromTs, classifier, fallbackZoneId)
             windows.recompute(nights.recompute(changedFromTs, sleep, run).from, run)
+            db.focus().recount()
             written
         }
 
@@ -56,6 +57,7 @@ class DerivedTables(
             val written = sessions.recomputeAll(classifier, fallbackZoneId)
             nights.recompute(null, sleep, run)
             windows.recompute(null, run)
+            db.focus().recount()
             written
         }
 

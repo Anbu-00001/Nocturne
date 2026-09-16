@@ -10,12 +10,15 @@ import io.github.anbu00001.nocturne.collector.Harvester
 import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
 import io.github.anbu00001.nocturne.core.metrics.METRICS_VERSION
 import io.github.anbu00001.nocturne.core.sleep.SLEEP_MODEL_VERSION
+import io.github.anbu00001.nocturne.focus.FocusController
 import io.github.anbu00001.nocturne.data.DerivedTables
 import io.github.anbu00001.nocturne.data.NocturneDatabase
+import io.github.anbu00001.nocturne.data.Reflections
 import io.github.anbu00001.nocturne.data.SleepReportEntity
 import io.github.anbu00001.nocturne.ui.AppLabels
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
@@ -28,6 +31,8 @@ class NocturneApp : Application(), CollectorHost {
     override val database: NocturneDatabase by lazy { NocturneDatabase.open(this) }
     val labels: AppLabels by lazy { AppLabels(this) }
     val deviceProfile by lazy { DeviceProfile(this) }
+    val reflections by lazy { Reflections(database) }
+    val focus by lazy { FocusController(this) }
 
     override val harvester: Harvester by lazy {
         Harvester(
@@ -44,6 +49,7 @@ class NocturneApp : Application(), CollectorHost {
         super.onCreate()
         HarvestScheduler.ensureScheduled(this)
         rescoreIfModelChanged()
+        focus.resume()
     }
 
     /**
@@ -60,9 +66,7 @@ class NocturneApp : Application(), CollectorHost {
         }
     }
 
-    fun harvestNow() {
-        appScope.launch { harvester.harvest() }
-    }
+    fun harvestNow(): Job = appScope.launch { harvester.harvest() }
 
     /** The user's own sleep times for a night (spec §6.3): kept as entered, then every night is re-derived. */
     fun saveSleepReport(nightDate: String, onsetTs: Long, wakeTs: Long, utcOffsetMinutes: Int, sleepLatencyScore: Int? = null) {
