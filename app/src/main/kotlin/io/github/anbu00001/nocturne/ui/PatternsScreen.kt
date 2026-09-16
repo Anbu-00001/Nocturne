@@ -47,6 +47,7 @@ import com.patrykandpatrick.vico.compose.common.component.rememberLineComponent
 import com.patrykandpatrick.vico.compose.common.component.rememberTextComponent
 import com.patrykandpatrick.vico.compose.common.data.ExtraStore
 import io.github.anbu00001.nocturne.NocturneApp
+import io.github.anbu00001.nocturne.core.detect.SentinelResult
 import io.github.anbu00001.nocturne.core.metrics.MetricKey
 import io.github.anbu00001.nocturne.core.metrics.ProxyCheck
 import io.github.anbu00001.nocturne.core.metrics.WithheldReason
@@ -54,8 +55,14 @@ import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.NightTotals
+import io.github.anbu00001.nocturne.data.Sentinels
 import io.github.anbu00001.nocturne.data.WindowMetricEntity
 import io.github.anbu00001.nocturne.tone.Tone
+import java.time.LocalDate
+import java.time.format.DateTimeFormatter
+import kotlin.math.ceil
+import kotlin.math.floor
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -64,10 +71,7 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
-import java.time.LocalDate
-import java.time.format.DateTimeFormatter
-import kotlin.math.ceil
-import kotlin.math.floor
+import kotlinx.coroutines.withContext
 
 /** The regularity windows ending on the latest night that has a verdict. */
 data class Regularity(val endDate: String, val rows: List<WindowMetricEntity>)
@@ -118,12 +122,52 @@ fun PatternsScreen(app: NocturneApp) {
             )
             SleepChart(sleep)
             RegularitySection(regularity)
+            ShiftsSection(app, sleep)
             GapsSection(app)
             NightColumnChart(Tone.Patterns.GLANCES_PER_NIGHT, vm.glancesProducer, nights) { it.glances }
             NightColumnChart(Tone.Patterns.EVENING_MINUTES, vm.eveningProducer, nights) { it.eveningScreenMs / 60_000 }
         }
     }
 }
+
+/** Analytics Tier 2 in words: re-read whenever the nights change, which is when a recompute has written new values. */
+@Composable
+private fun ShiftsSection(app: NocturneApp, nights: List<NightEntity>) {
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    var report by remember { mutableStateOf<Sentinels.Report?>(null) }
+    LaunchedEffect(nights) {
+        report = withContext(Dispatchers.IO) { Sentinels(app.database, app.deviceProfile.sleepConfig()).assess() }
+    }
+    val current = report ?: return
+    Text(Tone.Shifts.SECTION, style = MaterialTheme.typography.titleMedium)
+    Text(
+        when (val onset = current.onset) {
+            is SentinelResult.Withheld -> Tone.Shifts.onsetWithheld(onset.have, onset.need)
+            is SentinelResult.Steady -> Tone.Shifts.onsetSteady(probabilityText(onset.probability))
+            is SentinelResult.Shift -> Tone.Shifts.onsetShift(
+                shortDate(onset.around.toString()), onsetClock(onset.before), onsetClock(onset.after), probabilityText(onset.probability), onset.valuesSince,
+            )
+        },
+        color = if (current.onset is SentinelResult.Shift) MaterialTheme.colorScheme.onSurface else muted,
+    )
+    Text(
+        when (val sri = current.sri) {
+            is SentinelResult.Withheld -> Tone.Shifts.sriWithheld(sri.have, sri.need)
+            is SentinelResult.Steady -> Tone.Shifts.sriSteady(probabilityText(sri.probability))
+            is SentinelResult.Shift -> Tone.Shifts.sriShift(
+                shortDate(sri.around.toString()), "%.0f".format(sri.before), "%.0f".format(sri.after), probabilityText(sri.probability), sri.valuesSince,
+            )
+        },
+        color = if (current.sri is SentinelResult.Shift) MaterialTheme.colorScheme.onSurface else muted,
+    )
+    Text(Tone.Shifts.NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+}
+
+private fun probabilityText(p: Double): String = "%.2f".format(p)
+
+/** Minutes after noon as a clock time. */
+private fun onsetClock(minutesAfterNoon: Double): String =
+    minuteText(Math.floorMod(Math.round(minutesAfterNoon).toInt() + 12 * 60, LocalClock.MINUTES_PER_DAY))
 
 /**
  * Analytics Tier 1 in words, for the 7- and 28-night windows ending on the latest judged night. A withheld metric says

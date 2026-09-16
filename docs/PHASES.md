@@ -19,7 +19,7 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 | 3a | μEMA reflection cards, focus timer with interruption count | 📱 | installed on the A18 2026-09-16 16:12 (schema 6, Focus tab); timer checked on the phone, including deep Doze; cards wait for a real gap |
 | 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | port and synthetic golden files done 2026-09-16; phase estimator on the phone's history in LiveDatabaseTest; real-week golden file and any display wait for a week of light (22 Sept) |
 | 3c | Personal sensitivity fit, n ≥ 30 nights | 📱 | falling-asleep times collected from 2026-09-15; needs 30 nights with light |
-| 4 | ActivityWatch exporter on Ubuntu | laptop + 📱 export | |
+| 4 | ActivityWatch on Ubuntu: laptop use into sleep inference and §6.1, phone sessions and nights into ActivityWatch | laptop + 📱 over adb | built 2026-09-17; schema 7 APK installed 00:22, phone checks wait for the phone |
 
 ## Building
 
@@ -45,6 +45,11 @@ Developer tools that read personal data. Keep every export and database copy out
   `adb shell am broadcast -n io.github.anbu00001.nocturne/.debug.DebugReportReceiver --es night 2026-09-09 --es onset 2026-09-10T01:59 --es wake 2026-09-10T10:48`,
   or `--ez noSleep true`, or `--ez remove true`. Local times; the broadcast prints what it saved.
   The same receiver runs a short focus block (`--es focus start --ei minutes 2`, `--es focus stop`, `--es focus state`), lists and removes recorded blocks (`--es focus list`, `--es focus delete --el id 3`), and shows the gap card the rules would pick now without recording a prompt, with the week's unlabelled gaps (`--es gaps preview`).
+- Laptop use (Phase 4, standard-library Python, tests: `python3 -m unittest discover -s tools/activitywatch`): with aw-server-rust and the watcher running (see "Phase 4"),
+  `python3 tools/activitywatch/nocturne_aw.py status` says what each part last recorded, `... sync` sends the last 7 days of laptop use to the phone over adb and rebuilds the phone's buckets in ActivityWatch, `... laptop-file --out f.csv` writes what would be sent.
+  `NOCTURNE_LAPTOP_FILE=f.csv` beside `NOCTURNE_LIVE_DB` imports it into the database copy and lists the nights it moves.
+  On the phone side, adb's shell reaches `content://io.github.anbu00001.nocturne.laptop/` (`content write` to `import`, `content query` on `import`, `content read` from `sessions?from=<ms>` and `nights?from=<date>`).
+- BOCPD reference (Phase 3.5): `uv venv && uv pip install -r tools/bocpd/requirements.txt`, then `python tools/bocpd/bocpd_golden.py --out core-model/src/test/resources/bocpd` rewrites the golden files identically.
 - nparACT reference values (analytics §5): build R and nparACT as in `tools/actigraphy/environment.txt`, then
   `Rscript tools/actigraphy/nparact_golden.R --synthetic core-model/src/test/resources/nparact` regenerates the golden files, or
   `Rscript tools/actigraphy/nparact_golden.R data/build/live-activity-minutes.txt` checks the phone's own week.
@@ -148,6 +153,50 @@ Phone checks for 3a, after install (debug receiver commands in "Building"; none 
 - `--es gaps preview` after an hour or more without unlocking, outside the evening window: it names that gap. Open Nocturne: one card; open it again within 3 h: the same card or none; inside the evening window: none.
 - Patterns: the weekly list and labelled time.
 
+## Phase 4: laptop use from ActivityWatch (2026-09-17)
+
+The spec's Phase 4 folds the laptop into the model instead of building a Linux tracker. What changed, and what testing on this laptop (Dell Inspiron 16 5640, Ubuntu 24.04, GNOME 46 on Wayland) turned up:
+
+- **Laptop use is evidence of being awake.** 14 Sept was first read as sleep from 21:30 because the phone was quiet while you worked at the laptop. Sleep inference (model 4) now takes laptop use as a second stream: each 10 min of it inside a candidate sleep costs ln(0.01 / 1), about what a minute of unlocked phone use there costs, and the ends and starts of laptop use are onset and wake candidates. The time terms of a Poisson likelihood are left out, so a night with laptop data is not pulled toward a longer sleep by a rate fitted to one evening. On a 14 Sept-like night the onset moves from 21:31 to the end of laptop use; a four-minute visit at 03:00 changes nothing. Laptop use is not counted as a sleep interruption, which stays the phone's.
+- **The laptop screen is the second emitter of §6.1.** E = L × content × A / d² × MDER, at 40 to 70 cm (measured computer viewing distances average 56 to 62 cm), for a panel whose size comes from its EDID (345 × 215 mm) and whose peak comes from its specification (250 nits for the 45% NTSC panel). The backlight is sysfs's `actual_brightness / max_brightness`, near linear in luminance; Night Light is GNOME's own `NightLightActive`. What the screen shows is not recorded, so the band spans dark and light content. At the 6% backlight this laptop ran at in the evening the middle is about 1.6 lx; full white at full backlight reaches about 100 lx at the high end, near the 80 lx measured at evening computer work. While someone is at the laptop the middle estimate keeps the phone's last room reading, as it does for 30 min after the phone's screen goes off.
+- **Nothing on the phone gains network access.** A content provider takes laptop use in (`adb shell content write`) and gives sessions and nights out (`content read`); both need `android.permission.DUMP`, which adb's shell holds and apps cannot. The import runs after the write returns and records its outcome for `content query`.
+- **One format, two ends, one test file.** The laptop writes `nocturne-laptop,1` lines (display, coverage, spans); core-model parses them and refuses a file breaking any rule whole. `core-model/src/test/resources/laptop/sample.csv` is written by the Python test and parsed by the Kotlin test.
+- **Imports replace, never append.** Each file covers a range per laptop; the phone replaces that laptop's spans starting in it, so sending the same week twice changes nothing and a span still growing when sent is corrected next time. Only the nights around what differs are re-derived, in the same transaction as the import, under the harvest lock.
+- **ActivityWatch cuts events at a query's edges.** On aw-server-rust 0.13.2 an event from 10:00 to 11:00 queried from 10:30 came back as 10:30 to 11:00, which would have sent a stretch crossing the start of a file as a second, overlapping span. The laptop reads a day before the range and leaves a stretch that began before it to the file that covered its start. It merges a heartbeat only into an event it starts at or after, and keeps the longer end.
+- **awatcher does not run here.** On GNOME Wayland its window watcher needs the "Focused Window D-Bus" Shell extension, and without it awatcher quits after about 10 s, taking its idle watcher and bundled server with it (awatcher 0.4.0; its main loop ends when either watcher gives up). The original aw-watcher-afk reads X11, which sees no Wayland input. So the server is aw-server-rust from the ActivityWatch 0.13.2 release, unpacked into `~/.local/opt/activitywatch` without installing, and `nocturne_aw.py watch --afk` records presence the way awatcher does on GNOME (Mutter's IdleMonitor, not-afk until 180 s without input, ending at the last input) into the standard `aw-watcher-afk_<host>` bucket, beside backlight and Night Light in `nocturne-display_<host>`. Its heartbeats keep each stretch's first timestamp, since one read a millisecond early starts a new event. Drop `--afk` if awatcher (with the extension) or another AFK watcher takes over.
+- **The phone in ActivityWatch.** `phone-to-aw` rebuilds `nocturne-sessions_<model>` (kind, unlock, trigger, glance, app) and `nocturne-sleep_<model>` whole on each run: they are derived rows that change with every recompute. ActivityWatch's timeline then shows the phone beside the laptop.
+- **Schema 7** adds `laptop_spans` (primary data, never touched by recompute), `laptop_hosts` (panel and coverage per laptop) and `nights.lightLaptopMinutes`. Last night draws laptop use as a line under sleep; Tonight and Last night say how many light minutes were at a laptop; Settings lists each laptop, its last send and panel. A gap card, and each gap in Patterns' weekly list, says how much of the gap was spent at a laptop, which helps tell work from rest.
+- **A recompute bug found on the phone's copy.** Sessions before 17:00 group with the night before for inference but under their own day in the sessions table, so the A18's 4 Sept existed only for inference, and incremental recomputes never revisited it: it kept a 7-night evening window after the 8th night counted. Incremental runs now revisit every stored earlier night; NightRecomputerTest reproduces it.
+- **Checked on the laptop, 16 and 17 Sept.** Model 4 with the A18's display profile reproduced all 13 stored nights exactly except 4 Sept's stale window, on a fresh copy of the phone's database (schema 6 to 7, all 22,268 raw events kept). Tonight's first real laptop use (00:06 and 00:16) imported into that copy and moved no night, being before the evening window. Still to see: the import on the phone itself, and a night with laptop use.
+
+Setting it up to run at login (user units, no sudo; the templates are in `tools/activitywatch/systemd`):
+
+```
+mkdir -p ~/.local/opt/activitywatch && cd /tmp && curl -LO https://github.com/ActivityWatch/activitywatch/releases/download/v0.13.2/activitywatch-v0.13.2-linux-x86_64.deb
+dpkg-deb -x activitywatch-v0.13.2-linux-x86_64.deb aw && cp -r aw/opt/activitywatch/aw-server-rust ~/.local/opt/activitywatch/ && cp -r aw/opt/activitywatch/aw-server/aw_server/static ~/.local/opt/activitywatch/webui
+mkdir -p ~/.config/systemd/user && cp ~/26_class/Nocturne/tools/activitywatch/systemd/* ~/.config/systemd/user/
+systemctl --user daemon-reload && systemctl --user enable --now aw-server.service nocturne-watch.service nocturne-sync.timer
+```
+(Already unpacked on this laptop on 17 Sept.) The web UI is at http://127.0.0.1:5600. To stop: `systemctl --user disable --now nocturne-sync.timer nocturne-watch.service aw-server.service`.
+
+Phone checks for 4, after install (none touches the screen):
+
+- `adb shell run-as io.github.anbu00001.nocturne ls databases`, then a copy of the database reads schema 7, every raw event still there, nights re-derived under the new model run.
+- `python3 tools/activitywatch/nocturne_aw.py sync`: the import reports ok, `status` shows the phone's last import, and the ActivityWatch timeline shows `nocturne-sessions_CPH2591` beside `aw-watcher-afk_anbunew`.
+- The morning after an evening at the laptop: Last night shows the laptop line, and the light line counts laptop minutes.
+
+## Phase 3.5: the shift sentinel (2026-09-17)
+
+Built before its 60 nights, as the circadian port was, because it can be checked now against a reference; it says nothing until the data exists.
+
+- **The port.** `core-model`'s `detect/Bocpd.kt` is Adams and MacKay's recursion with a constant hazard and a Gaussian of unknown mean and variance (Normal-Inverse-Gamma prior, Student-t predictive), ported step for step from `bayesian_changepoint_detection` 0.2.dev1 (the NumPy version on PyPI; the GitHub master has moved to PyTorch). On three seeded series from `tools/bocpd/bocpd_golden.py`, a two-hour onset shift, a steady SRI and a sharp prior with an outlier, every run-length posterior after every value matches within 1e-9. It runs in log space, so a value far outside every run cannot empty a column, and without pruning, since a nightly series of years costs milliseconds.
+- **What it reports.** The chance that the latest run began between 7 and 42 nights ago, the most likely night it began, and the medians either side, for example "Your sleep onset appears to have shifted around 14 Mar, from about 00:20 to about 02:20. P(change) = 0.91, based on 21 nights since." A probability, never a verdict (analytics pitfall 6).
+- **When it speaks, measured.** On simulated steady nights with onsets spread 45 min and the prior's spread set from the first two weeks, P(change) reached 0.8 on 0.23% of nights and passed 0.9 on 0.06% (40 series of 160 nights, with the reference). A one-hour shift reached 0.8 after a median of 10 nights, 90 min after 8, two hours after 7, the least the 7-night minimum allows. So a shift is reported from 0.8, and above 0.9 it is the spec's trigger for an early Tier 3 refit, once Tier 3 exists.
+- **Weekly SRI, not the nightly 7-night SRI.** Neighbouring 7-night windows share 6 nights, which the model takes as independent evidence: on steady simulated sleep it passed 0.8 on 58% of nights, in every series. One SRI a week from non-overlapping windows passed 0.8 in 0.2% of weeks. Hazard 1/13 a week (still one change a quarter), a change looked for 2 to 6 weeks back, from 8 weeks with an SRI.
+- **Which onsets count.** Your entered times, and estimates confident enough to feed the priors (0.4); sleepless nights are left out. Onset is in minutes after noon, so 23:30 and 01:30 are two hours apart. The hazard is per value, so a night without an onset is not a night.
+- **Not stored.** Patterns reads the sentinel from the nights and windows each recompute writes; the whole history takes milliseconds. The live-database check prints it.
+- **Still to do at 60 nights:** tune the hazard against your own history, as the analytics spec asks, and compare what it reports with what you remember.
+
 ## Phase 3 readiness
 
 What each step needs, and what is already in place.
@@ -167,7 +216,7 @@ Where each part of the analytics spec lands among the phases above, and where th
 | 2.6 | Schema 4: a derived `window_metrics` table and `model_runs`, nights and windows carrying the run that wrote them | 2.5b | done and installed 2026-09-15 |
 | 2.5c | Screen-use figures checked against sleep inference in every window; nparACT golden files | 2.5b | done and installed 2026-09-15 |
 | 2.7 | Package and class names interned into `event_components` (schema 5): an event with its index from about 128 bytes to 42, nothing lost | a manual migration tested on a phone copy, with the old table kept one release | done and installed 2026-09-15; the next schema change drops the old table |
-| 3.5 | Bayesian online changepoint sentinel on nightly onset and 7-day SRI | 60 nights, about 3 Nov 2026 | after 3a and 3b |
+| 3.5 | Bayesian online changepoint sentinel on nightly onset and weekly SRI | 60 nights, about 3 Nov 2026 | built 2026-09-17 and checked against its reference; Patterns says what it waits for until 60 nights |
 | 5 | Tier 3: PELT eras, elastic net, a mixture model of night types, refits, on a charging and idle worker | 180 nights, about March 2027 | last |
 
 - **Every raw event stays.** The analytics spec's storage arithmetic matches this phone: about 1,830 events a day, and the whole database with derived tables was 2.9 MB after 11 days. Interning (2.7) takes a year of raw events from about 85 MB to 28 MB.
@@ -183,6 +232,7 @@ Where each part of the analytics spec lands among the phases above, and where th
 - **A model run is reused while nothing changes.** Its key is the classifier, sleep and metrics versions plus the sleep, display, light and free-night configuration as their data classes print. The classifier's package lists are left out (a new launcher is not a new model), and the configuration is stored as readable text rather than parsed JSON. Sessions do not carry a run id: they depend only on the classifier version, which the run records.
 - **The sensitivity fit stays in Phase 3c at 30 nights,** as the main spec says, and Tier 3 re-runs it later. The analytics spec bundles it into Phase 5, which would wait for 180 nights with no statistical reason.
 - **Cold-tier compression waits until year three,** as the analytics spec itself says.
+- **The drift sentinel reads weekly SRI, not the nightly 7-night SRI,** whose overlapping windows made it cry change on most steady nights in simulation (see "Phase 3.5").
 
 ## Phone checks for 1d and 1e
 
@@ -268,6 +318,13 @@ Phase 3a:
 - **The focus timer's end is signalled.** The spec's no-notification rule is about prompts; a timer the user started has to say when it is done. It vibrates and plays the notification sound, and the notification itself is optional.
 - **The timer's end is an alarm clock**, with its status-bar icon, because ColorOS widened exact alarms by 75% of the time left (see "Phase 3a").
 - **Breaks are not recorded**; focus_blocks holds focus only, as schema 1 defined it.
+
+Phase 4:
+
+- **A presence watcher of Nocturne's own, beside ActivityWatch's server.** The spec says not to write a Linux tracker. awatcher, the only ActivityWatch watcher that reads GNOME Wayland, quits without a Shell extension, so `watch --afk` does its GNOME idle reading into its bucket, in its format, and nothing more: no windows, no titles.
+- **A backlight and Night Light watcher.** No ActivityWatch watcher records them, and the screen's light depends on both.
+- **Over adb, not a synced folder.** The spec mentions aw-sync; the phone has no network permission and no folder sync, and adb already carries the development workflow.
+- **Laptop use is a separate stream in sleep inference with a fixed cost per piece**, not more phone sessions: added to the phone's counts, a long evening at the laptop would raise the phone's fitted awake rate and make quiet phone stretches elsewhere look more like sleep.
 
 Analytics: see "Analytics layer" above.
 

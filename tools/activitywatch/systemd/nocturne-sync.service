@@ -1,0 +1,8 @@
+# Laptop use to the phone and the phone's sessions and nights to ActivityWatch, when the phone is on adb (Phase 4).
+[Unit]
+Description=Nocturne laptop and phone sync
+After=aw-server.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 %h/26_class/Nocturne/tools/activitywatch/nocturne_aw.py sync --if-connected

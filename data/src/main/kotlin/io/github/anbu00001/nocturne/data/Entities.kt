@@ -171,6 +171,8 @@ data class NightEntity(
     @ColumnInfo(defaultValue = "0") val inferredNoSleep: Boolean = false,
     /** Schema 4. The model run that wrote this row (analytics §6.2); 0 for rows written before runs were recorded. */
     @ColumnInfo(defaultValue = "0") val modelRunId: Long = 0,
+    /** Schema 7. Minutes of the light interval someone was at a laptop, whose screen the suppression band includes. */
+    @ColumnInfo(defaultValue = "0") val lightLaptopMinutes: Int = 0,
 )
 
 /**
@@ -272,6 +274,36 @@ data class FocusBlockEntity(
     /** Unlocks during the block. */
     val interruptionCount: Int,
     val label: String?,
+)
+
+/**
+ * Schema 7 (Phase 4). Primary data from a laptop: someone was using [host] from [startTs] to [endTs] (ActivityWatch's
+ * not-afk), with its backlight's share of its range and whether a night filter was on, null where not recorded. Never
+ * derived and never touched by recompute; an import replaces only the spans starting inside the range it covers.
+ */
+@Entity(tableName = "laptop_spans", primaryKeys = ["host", "startTs"], indices = [Index("startTs")])
+data class LaptopSpanEntity(
+    val host: String,
+    val startTs: Long,
+    val endTs: Long,
+    val backlight: Double?,
+    val warmFilter: Boolean?,
+)
+
+/** Schema 7 (Phase 4). A laptop that has sent its use: its panel as it described it, and what its imports have covered. */
+@Entity(tableName = "laptop_hosts")
+data class LaptopHostEntity(
+    @PrimaryKey val host: String,
+    val widthMm: Int,
+    val heightMm: Int,
+    val minNits: Double,
+    val peakNits: Double,
+    /** The earliest start and latest end any import covered; gaps between imports are possible. */
+    val coveredFromTs: Long,
+    val coveredToTs: Long,
+    val lastImportAt: Long,
+    /** Spans in the latest import. */
+    val lastImportSpans: Int,
 )
 
 /** Time zones observed on the device, so each event's offset can be resolved for its own instant. */

@@ -163,6 +163,7 @@ fun TonightScreen(app: NocturneApp) {
                         ),
                     )
                     Text(Tone.Light.coverage(night.lightMeasuredMinutes, night.lightScreenMinutes), color = muted)
+                    if (night.lightLaptopMinutes > 0) Text(Tone.Laptop.eveningMinutes(night.lightLaptopMinutes), color = muted)
                     if (night.suppressionDurationClamped) Text(Tone.Light.DURATION_CLAMPED, style = small, color = muted)
                 }
                 state.lightEnabled -> Text(Tone.Tonight.SUPPRESSION_PENDING, color = muted)

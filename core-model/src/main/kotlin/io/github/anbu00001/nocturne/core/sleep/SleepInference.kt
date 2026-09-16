@@ -13,7 +13,7 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /** Bump when sleep inference changes; the app then re-derives every night (spec §5). */
-const val SLEEP_MODEL_VERSION = 3
+const val SLEEP_MODEL_VERSION = 4
 
 /** One screen session as sleep inference sees it. */
 data class NightSession(
@@ -38,6 +38,8 @@ data class NightInput(
     /** First and last instants the harvested history covers. A night outside them gets no estimate, not a guess. */
     val dataFromTs: Long = Long.MIN_VALUE,
     val dataToTs: Long = Long.MAX_VALUE,
+    /** When someone was using a computer (Phase 4), sorted and disjoint. Empty when no laptop reported. */
+    val laptop: List<LongRange> = emptyList(),
 )
 
 /** How much a session says about the user being awake. */
@@ -81,6 +83,15 @@ data class SleepConfig(
     val asleepWeakPerHour: Double = 0.15,
     /** Awake rates are fitted per night; this keeps a very quiet evening from looking like sleep by default. */
     val awakeFloorPerHour: Double = 0.5,
+    /** Laptop use is counted in pieces this long, so an hour at the laptop weighs more than a minute there. */
+    val laptopChunkMs: Long = 10 * LocalClock.MINUTE_MS,
+    /**
+     * Each piece of laptop use inside a sleep costs ln(asleep / awake): someone typing or moving the pointer is about a
+     * hundred times likelier awake than asleep. That is close to the cost of a minute of unlocked phone use inside a
+     * sleep. An assumption, not fitted: no night yet has laptop data and the user's word together.
+     */
+    val asleepLaptopPerHour: Double = 0.01,
+    val awakeLaptopPerHour: Double = 1.0,
     val typicalDurationMin: Double = 7.5 * 60,
     val typicalDurationSdMin: Double = 2.0 * 60,
     /**
@@ -223,7 +234,8 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
         val windowEnd = midnight + LocalClock.DAY_MS + config.windowEndHour * LocalClock.HOUR_MS
         val searchEnd = minOf(windowEnd, night.dataToTs)
         val marks = marksOf(night.sessions, config).filter { it.startTs in windowStart until searchEnd }
-        if (marks.isEmpty()) return null
+        val laptop = LaptopChunks.of(night.laptop, windowStart, searchEnd, config.laptopChunkMs)
+        if (marks.isEmpty() && laptop.isEmpty()) return null
         val starts = LongArray(marks.size) { marks[it].startTs }
         val strongBefore = IntArray(marks.size + 1)
         val weakBefore = IntArray(marks.size + 1)
@@ -234,13 +246,14 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
         val windowHours = (searchEnd - windowStart).toDouble() / LocalClock.HOUR_MS
 
         val candidates = ArrayList<Candidate>()
-        val onsets = marks.map { it.activeEndTs }.filter { it in onsetFrom..minOf(onsetTo, searchEnd) }.distinct().map { it to true } +
+        val onsets = (marks.map { it.activeEndTs } + laptop.ranges.map { it.last })
+            .filter { it in onsetFrom..minOf(onsetTo, searchEnd) }.distinct().map { it to true } +
             (onsetFrom to false)
         for ((onset, onsetAnchored) in onsets) {
             val latestWake = minOf(windowEnd, onset + config.maxSleepMs)
             // Only claim "still asleep at the edge" if the history actually reaches that edge, and never for a morning onset.
             val openEnded = if (night.dataToTs >= latestWake && onset <= usualOnsetTo) listOf(latestWake to false) else emptyList()
-            val wakes = marks.map { it.startTs }
+            val wakes = (marks.map { it.startTs } + laptop.ranges.map { it.first })
                 .filter { it >= onset + config.minSleepMs && it <= latestWake }
                 .distinct()
                 .map { it to true } + openEnded
@@ -259,6 +272,7 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
                     poisson(weakIn, config.asleepWeakPerHour, sleepHours) +
                     poisson(strongOut, max(strongOut / awakeHours, config.awakeFloorPerHour), awakeHours) +
                     poisson(weakOut, max(weakOut / awakeHours, config.awakeFloorPerHour), awakeHours)
+                score += laptop.overlapping(onset, wake) * ln(config.asleepLaptopPerHour / config.awakeLaptopPerHour)
                 score += durationPriorShape(sleepHours * 60, prior)
                 if (prior != null) score += onsetPriorShape(onset, night.offsetMinutes, prior)
                 candidates += Candidate(onset, wake, onsetAnchored, wakeAnchored, score, strongIn + weakIn)
@@ -351,15 +365,56 @@ class SleepInference(private val config: SleepConfig = SleepConfig()) {
         return covered.toDouble() / (to - from)
     }
 
-    private fun lowerBound(sorted: LongArray, value: Long): Int {
-        var lo = 0
-        var hi = sorted.size
-        while (lo < hi) {
-            val mid = (lo + hi) ushr 1
-            if (sorted[mid] < value) lo = mid + 1 else hi = mid
+}
+
+/**
+ * Laptop use inside a night's search window, in pieces of at most [chunkMs]. The time terms of a Poisson likelihood
+ * are left out: fitting an awake rate to one evening at the laptop would pull every night that has laptop data
+ * towards a longer sleep, so a piece inside a sleep costs a fixed log ratio instead ([SleepConfig.asleepLaptopPerHour]).
+ * Laptop use is not an interruption of sleep in the nights table, which counts the phone's.
+ */
+internal class LaptopChunks private constructor(
+    /** The clipped ranges themselves: their ends are onset candidates, their starts wake candidates. */
+    val ranges: List<LongRange>,
+    private val starts: LongArray,
+    private val ends: LongArray,
+) {
+    fun isEmpty() = starts.isEmpty()
+
+    /** Pieces with any time inside [onset, wake). */
+    fun overlapping(onset: Long, wake: Long): Int = lowerBound(starts, wake) - lowerBound(ends, onset + 1)
+
+    companion object {
+        /** [active] must be sorted and disjoint, as LaptopActivity.merged makes it. */
+        fun of(active: List<LongRange>, fromTs: Long, toTs: Long, chunkMs: Long): LaptopChunks {
+            val ranges = active.mapNotNull { r ->
+                val start = maxOf(r.first, fromTs)
+                val end = minOf(r.last, toTs)
+                if (end >= start && start < toTs) start..end else null
+            }
+            val starts = ArrayList<Long>()
+            val ends = ArrayList<Long>()
+            for (r in ranges) {
+                var t = r.first
+                do {
+                    starts += t
+                    ends += minOf(t + chunkMs, r.last)
+                    t += chunkMs
+                } while (t < r.last)
+            }
+            return LaptopChunks(ranges, starts.toLongArray(), ends.toLongArray())
         }
-        return lo
     }
+}
+
+private fun lowerBound(sorted: LongArray, value: Long): Int {
+    var lo = 0
+    var hi = sorted.size
+    while (lo < hi) {
+        val mid = (lo + hi) ushr 1
+        if (sorted[mid] < value) lo = mid + 1 else hi = mid
+    }
+    return lo
 }
 
 internal fun square(x: Double) = x * x

@@ -1,0 +1,5 @@
+# Reference environment for bocpd_golden.py (Phase 3.5 golden files). Pinned, like tools/circadian. Laptop only.
+# The GitHub master of this package moved to PyTorch; 0.2.dev1 on PyPI is the NumPy/SciPy version Nocturne ports.
+bayesian_changepoint_detection==0.2.dev1
+numpy==2.5.3
+scipy==1.18.1

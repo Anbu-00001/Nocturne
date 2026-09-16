@@ -196,6 +196,34 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun schemaSixMigratesToSevenAddingLaptopUseAndKeepingEveryNight() = runTest {
+        val file = freshFile("migration-test-6.db")
+        createSchema(file, version = 6) { db ->
+            db.execSQL("INSERT INTO event_components (id, packageName, className) VALUES (1, 'android', '')")
+            db.execSQL("INSERT INTO raw_events (id, timestamp, utcOffsetMinutes, eventType, componentId) VALUES (1, 1000, 330, 15, 1)")
+            db.execSQL(
+                """INSERT INTO nights (dateOfNight, estimatedSleepOnset, estimatedWakeTime, confidence, source, eveningScreenMinutes,
+                   postOnsetInterruptions, lightScreenMinutes) VALUES ('2026-09-15', 100, 200, 0.5, 'INFERRED', 12, 1, 7)""",
+            )
+            db.execSQL("INSERT INTO reflections (promptedAt, answeredAt, gapStartTs, gapEndTs, rating, note, dismissed, source) VALUES (5000, NULL, 1000, 4000, NULL, NULL, 0, 'BACKFILL')")
+        }
+
+        val room = open(file)
+        try {
+            assertEquals(listOf(RawEvent(1, 1000, 330, 15, "android", "")), room.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 10))
+            val night = room.sleep().nights().single()
+            assertEquals(7, night.lightScreenMinutes)
+            assertEquals(0, night.lightLaptopMinutes)
+            assertEquals(io.github.anbu00001.nocturne.core.reflect.ReflectionSource.BACKFILL, room.reflections().since(0).single().source)
+            room.laptop().insertSpans(listOf(LaptopSpanEntity("workbook", 1000, 2000, null, true)))
+            assertEquals(listOf(LaptopSpanEntity("workbook", 1000, 2000, null, true)), room.laptop().overlapping(1500, 1500))
+            assertEquals(emptyList<LaptopHostEntity>(), room.laptop().hosts())
+        } finally {
+            room.close()
+        }
+    }
+
     private fun freshFile(name: String): File = context.getDatabasePath(name).apply {
         parentFile?.mkdirs()
         delete()

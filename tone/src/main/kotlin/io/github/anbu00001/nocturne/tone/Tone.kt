@@ -68,7 +68,9 @@ object Tone {
         const val ALL_LABELLED = "Every gap this week has a label or was dismissed."
         const val SHOW_UNLABELLED = "Label them"
         const val HIDE_UNLABELLED = "Hide"
-        fun gapLine(day: String, from: String, to: String, duration: String) = "$day, $from to $to ($duration)"
+        fun gapLine(day: String, from: String, to: String, duration: String, atLaptop: String? = null) =
+            if (atLaptop == null) "$day, $from to $to ($duration)" else "$day, $from to $to ($duration, $atLaptop at a laptop)"
+        fun atLaptop(duration: String) = "$duration of it at a laptop"
     }
 
     /** Spec §7, "Pomodoro / focus timer". Interruptions are reported flatly, without commentary. */
@@ -203,7 +205,7 @@ object Tone {
             "The evening window starts 3 h before your usual sleep onset and ends at your usual wake, from $nights nights."
         const val LEGEND =
             "Bars are screen sessions and ticks above them are glances. The shaded band is the evening window, " +
-                "the line under the bars is sleep."
+                "the line under the bars is sleep, and the line below it is time at a laptop."
         const val EARLIER = "Earlier"
         const val LATER = "Later"
 
@@ -315,6 +317,37 @@ object Tone {
         fun noVariation(name: String) = "$name is undefined while nothing in the window varies"
     }
 
+    /** Phase 3.5: the drift sentinel. A posterior, never a verdict (analytics spec, pitfall 6). */
+    object Shifts {
+        const val SECTION = "Shifts"
+        fun onsetWithheld(have: Int, need: Int) = "Shifts in sleep onset are looked for from $need nights with an onset ($have so far)."
+        fun sriWithheld(have: Int, need: Int) = "Shifts in weekly sleep regularity are looked for from $need weeks with an SRI ($have so far)."
+        fun onsetSteady(probability: String) = "No shift in sleep onset over the last 6 weeks. P(change) = $probability."
+        fun sriSteady(probability: String) = "No shift in weekly sleep regularity over the last 6 weeks. P(change) = $probability."
+        fun onsetShift(around: String, before: String, after: String, probability: String, nights: Int) =
+            "Your sleep onset appears to have shifted around $around, from about $before to about $after. " +
+                "P(change) = $probability, based on $nights nights since."
+        fun sriShift(around: String, before: String, after: String, probability: String, weeks: Int) =
+            "Weekly sleep regularity (SRI) appears to have shifted around the week ending $around, from $before to $after. " +
+                "P(change) = $probability, based on $weeks weeks since."
+        const val NOTE =
+            "A probability from a changepoint model (Bayesian online changepoint detection), not a finding. " +
+                "It looks for a lasting shift, so one late night does not count."
+    }
+
+    /** Phase 4: laptop use sent from ActivityWatch on the laptop. */
+    object Laptop {
+        const val SECTION = "Laptop"
+        const val NONE =
+            "No laptop has sent its use. On the laptop, with the phone on USB: python3 tools/activitywatch/nocturne_aw.py sync"
+        fun host(host: String, sent: String, upTo: String, periods: Int) = "$host: sent $sent, use recorded up to $upTo ($periods periods in that send)"
+        fun panel(widthMm: Int, heightMm: Int, peakNits: String) = "Panel $widthMm x $heightMm mm, $peakNits nits at full backlight"
+        const val NOTE =
+            "Time at a laptop counts as awake for sleep estimates, and its screen adds to the modelled evening light. " +
+                "What the screen shows is not recorded, so the light range covers dark and light pages."
+        fun eveningMinutes(minutes: Int) = "$minutes of those minutes at a laptop, its screen included"
+    }
+
     object Settings {
         const val PERMISSIONS = "Permissions"
         const val USAGE_ACCESS = "Usage access"
@@ -361,8 +394,8 @@ object Tone {
         const val WIPE = "Delete all data"
         const val WIPE_TITLE = "Delete all data?"
         const val WIPE_BODY =
-            "This removes every harvested event, light sample, derived session and night, and any sleep times, gap labels " +
-                "and focus blocks you entered, " +
+            "This removes every harvested event, light sample, derived session and night, laptop use sent to it, and any " +
+                "sleep times, gap labels and focus blocks you entered, " +
                 "from this phone. Android still holds roughly the last 10 days of events, and the next harvest copies those " +
                 "back. Light samples cannot be recovered."
         const val CANCEL = "Cancel"

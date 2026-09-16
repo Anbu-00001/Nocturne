@@ -1,0 +1,15 @@
+# Backlight, Night Light and presence (--afk) into ActivityWatch for Nocturne (Phase 4). Drop --afk once awatcher or
+# aw-watcher-afk records presence, so aw-watcher-afk_<host> keeps one writer. Edit the path if the repository moves.
+[Unit]
+Description=Nocturne laptop watcher
+PartOf=graphical-session.target
+After=graphical-session.target aw-server.service
+Wants=aw-server.service
+
+[Service]
+ExecStart=/usr/bin/python3 -u %h/26_class/Nocturne/tools/activitywatch/nocturne_aw.py watch --afk
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

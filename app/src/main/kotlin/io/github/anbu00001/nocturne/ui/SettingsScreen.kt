@@ -48,6 +48,7 @@ import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.HarvestRunEntity
+import io.github.anbu00001.nocturne.data.LaptopHostEntity
 import io.github.anbu00001.nocturne.data.LightSampleEntity
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.PackageCount
@@ -107,6 +108,9 @@ class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
     ) { nights, reports ->
         SleepSettings(nights.lastOrNull { it.windowPersonalised } ?: nights.lastOrNull(), reports)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SleepSettings())
+
+    val laptops: StateFlow<List<LaptopHostEntity>> = app.database.laptop().observeHosts()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val light: StateFlow<LightSettings> = combine(
         app.database.light().observeLatest(),
@@ -168,6 +172,7 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
     val sleep by vm.sleep.collectAsStateWithLifecycle()
     val light by vm.light.collectAsStateWithLifecycle()
     val diagnostics by vm.diagnostics.collectAsStateWithLifecycle()
+    val laptops by vm.laptops.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     var confirmWipe by remember { mutableStateOf(false) }
     val screenTimeoutMs = remember { app.deviceProfile.sleepConfig().screenOffTimeoutMs }
@@ -304,6 +309,18 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
         }
         Text(Tone.Settings.screenTimeout(Tone.duration(screenTimeoutMs)), color = muted)
         Text(Tone.Settings.reports(sleep.reports), color = muted)
+
+        HorizontalDivider()
+        SectionTitle(Tone.Laptop.SECTION)
+        if (laptops.isEmpty()) {
+            Text(Tone.Laptop.NONE, color = muted)
+        } else {
+            for (laptop in laptops) {
+                Text(Tone.Laptop.host(laptop.host, dateTime(laptop.lastImportAt), dateTime(laptop.coveredToTs), laptop.lastImportSpans))
+                Text(Tone.Laptop.panel(laptop.widthMm, laptop.heightMm, plainNumber(laptop.peakNits)), color = muted)
+            }
+            Text(Tone.Laptop.NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+        }
 
         HorizontalDivider()
         SectionTitle(Tone.Settings.CLASSIFIER)

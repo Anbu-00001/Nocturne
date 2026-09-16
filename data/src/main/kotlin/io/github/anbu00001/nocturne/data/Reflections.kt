@@ -1,6 +1,7 @@
 package io.github.anbu00001.nocturne.data
 
 import androidx.room.withTransaction
+import io.github.anbu00001.nocturne.core.laptop.LaptopActivity
 import io.github.anbu00001.nocturne.core.light.EveningLight
 import io.github.anbu00001.nocturne.core.reflect.GapCard
 import io.github.anbu00001.nocturne.core.reflect.GapLabel
@@ -53,6 +54,12 @@ class Reflections(
     suspend fun note(reflectionId: Long, note: String) = db.reflections().note(reflectionId, note.trim().ifEmpty { null })
 
     /** Rule 5: the week's gaps with no label, newest first. */
+    /** Phase 4: how much of [gap] someone spent at a laptop, which helps say whether it was work or rest. */
+    suspend fun laptopMs(gap: PhoneDownGap): Long {
+        val spans = db.laptop().overlapping(gap.startTs, gap.endTs).map { it.toLaptopSpan() }
+        return LaptopActivity.overlapMs(LaptopActivity.merged(spans), gap.startTs, gap.endTs)
+    }
+
     suspend fun unlabelled(config: SleepConfig): List<PhoneDownGap> {
         val at = now()
         val view = load(at, config)

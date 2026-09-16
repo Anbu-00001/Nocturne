@@ -9,6 +9,8 @@ import io.github.anbu00001.nocturne.core.circadian.Hannay19
 import io.github.anbu00001.nocturne.core.circadian.LightScenario
 import io.github.anbu00001.nocturne.core.circadian.PhaseEstimator
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
+import io.github.anbu00001.nocturne.core.laptop.LaptopFileFormat
+import io.github.anbu00001.nocturne.core.light.DisplayProfile
 import io.github.anbu00001.nocturne.core.light.LightReading
 import io.github.anbu00001.nocturne.core.metrics.ActivityDay
 import io.github.anbu00001.nocturne.core.reflect.PhoneDownGaps
@@ -68,17 +70,35 @@ class LiveDatabaseTest {
         try {
             assertEquals(rawBefore, room.rawEvents().count())
             if (eventsBefore != null) assertEquals(eventsBefore, allEvents(room.rawEvents()))
-            val sessions = DerivedTables(room).recomputeAll(
-                ClassifierConfig(),
-                SleepConfig(screenOffTimeoutMs = 30 * LocalClock.MINUTE_MS),
-                fallbackZoneId = "Asia/Kolkata",
-            )
+            val storedNights = room.sleep().nights()
+            val sleepConfig = SleepConfig(screenOffTimeoutMs = 30 * LocalClock.MINUTE_MS)
+            // The copy comes from the A18, and the app there models light with its own panel.
+            val derived = DerivedTables(room, DisplayProfile.OPPO_A18)
+            val sessions = derived.recomputeAll(ClassifierConfig(), sleepConfig, fallbackZoneId = "Asia/Kolkata")
+            // Phase 4: laptop use sent as the laptop tool writes it, when a file is given.
+            val laptopFile = System.getenv("NOCTURNE_LAPTOP_FILE")
+            val beforeLaptop = room.sleep().nights()
+            var laptopResult: LaptopImport.Result? = null
+            if (laptopFile != null) {
+                val file = LaptopFileFormat.parse(File(laptopFile).readLines().asSequence())
+                derived.updateNights(sleepConfig) { LaptopImport(room).import(file).also { laptopResult = it }.changedFromTs }
+            }
             val nights = room.sleep().nights()
             val lastJudged = nights.lastOrNull { it.noSleep || it.estimatedSleepOnset != null }
             File("build/live-database.txt").writeText(
                 buildString {
                     val versionAfter = room.openHelper.readableDatabase.version
                     appendLine("schema $versionBefore -> $versionAfter, raw events $rawBefore before and ${room.rawEvents().count()} after, sessions $sessions")
+                    // Without laptop use the new model should give the stored nights back; only the run differs.
+                    val stored = storedNights.associateBy { it.dateOfNight }
+                    val moved = beforeLaptop.filter { n -> stored[n.dateOfNight]?.copy(modelRunId = 0, lightLaptopMinutes = 0) != n.copy(modelRunId = 0) }
+                    appendLine("recomputed nights differing from the stored ones: ${moved.size} of ${beforeLaptop.size}")
+                    moved.forEach { appendLine("  was ${stored[it.dateOfNight]}\n  now $it") }
+                    laptopResult?.let { r ->
+                        appendLine("laptop import: $r")
+                        val earlier = beforeLaptop.associateBy { it.dateOfNight }
+                        nights.filter { it != earlier[it.dateOfNight] }.forEach { appendLine("  was ${earlier[it.dateOfNight]}\n  now $it") }
+                    }
                     if (eventsBefore != null) {
                         val pairs = room.openHelper.readableDatabase.query("SELECT COUNT(*) FROM event_components").use { it.moveToFirst(); it.getInt(0) }
                         appendLine("all ${eventsBefore.size} events identical after interning, $pairs name pairs")
@@ -98,6 +118,7 @@ class LiveDatabaseTest {
                         appendLine("  $end  ${v("IS")}  ${v("IS_SLEEP")}  ${v("IV")}  ${v("IV_SLEEP")}  $l5  ${v("L5_ASLEEP")}")
                     }
                     appendLine("model runs: ${room.metrics().latestRun()}")
+                    appendLine("shift sentinel: ${Sentinels(room, sleepConfig).assess()}")
                     appendLine()
                     appendPhases(room, nights)
                     appendLine()

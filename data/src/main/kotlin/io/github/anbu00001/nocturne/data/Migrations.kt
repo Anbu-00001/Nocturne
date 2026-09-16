@@ -68,3 +68,23 @@ internal val MIGRATION_5_6 = object : Migration(5, 6) {
         db.execSQL("DROP TABLE IF EXISTS `$SCHEMA_FOUR_RAW_EVENTS`")
     }
 }
+
+/**
+ * Schema 7 (Phase 4): laptop use from ActivityWatch, as primary data, and each night's minutes at a laptop. Only adds, so
+ * nothing already stored changes; the nights' new column fills in at the recompute the new sleep model starts anyway.
+ */
+internal val MIGRATION_6_7 = object : Migration(6, 7) {
+    override fun migrate(db: SupportSQLiteDatabase) {
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `laptop_spans` (`host` TEXT NOT NULL, `startTs` INTEGER NOT NULL, `endTs` INTEGER NOT NULL, " +
+                "`backlight` REAL, `warmFilter` INTEGER, PRIMARY KEY(`host`, `startTs`))",
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS `index_laptop_spans_startTs` ON `laptop_spans` (`startTs`)")
+        db.execSQL(
+            "CREATE TABLE IF NOT EXISTS `laptop_hosts` (`host` TEXT NOT NULL, `widthMm` INTEGER NOT NULL, `heightMm` INTEGER NOT NULL, " +
+                "`minNits` REAL NOT NULL, `peakNits` REAL NOT NULL, `coveredFromTs` INTEGER NOT NULL, `coveredToTs` INTEGER NOT NULL, " +
+                "`lastImportAt` INTEGER NOT NULL, `lastImportSpans` INTEGER NOT NULL, PRIMARY KEY(`host`))",
+        )
+        db.execSQL("ALTER TABLE `nights` ADD COLUMN `lightLaptopMinutes` INTEGER NOT NULL DEFAULT 0")
+    }
+}

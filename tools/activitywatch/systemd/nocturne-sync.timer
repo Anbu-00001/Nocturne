@@ -1,0 +1,10 @@
+[Unit]
+Description=Nocturne sync every 30 minutes while logged in
+PartOf=graphical-session.target
+
+[Timer]
+OnActiveSec=2min
+OnUnitActiveSec=30min
+
+[Install]
+WantedBy=graphical-session.target

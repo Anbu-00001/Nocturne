@@ -60,6 +60,25 @@ class NightRecomputerTest {
     }
 
     @Test
+    fun aNightOnlyInferenceSeesStillFollowsWindowChangesInIncrementalRuns() = runTest {
+        // Sessions before 17:00 on the first day belong to the night before for inference, but to their own day in the
+        // sessions table; on the A18 that night (4 Sept) kept an old evening window after an eighth night counted.
+        seedTwelveNights()
+        db.sessions().insertAll(listOf(session(ist("2026-09-01", "13:00"), nightDate = "2026-09-01")))
+        val late = db.sessions().all().filter { it.startTs >= ist("2026-09-09", "17:00") }
+        db.sessions().deleteFrom(ist("2026-09-09", "17:00"))
+        val nights = NightRecomputer(db)
+        nights.recomputeAll(SleepConfig())
+        assertTrue(db.sleep().nights().any { it.dateOfNight == "2026-08-31" })
+
+        db.sessions().insertAll(late)
+        nights.recomputeFrom(ist("2026-09-09", "17:00"), SleepConfig())
+        val incremental = db.sleep().nights()
+        nights.recomputeAll(SleepConfig())
+        assertEquals(db.sleep().nights(), incremental)
+    }
+
+    @Test
     fun sqlWindowTagsMatchEveningWindowContains() = runTest {
         val night = "2026-09-01"
         val onset = ist("2026-09-02", "01:00")

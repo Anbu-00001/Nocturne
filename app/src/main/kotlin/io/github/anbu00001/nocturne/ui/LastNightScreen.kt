@@ -50,6 +50,7 @@ import io.github.anbu00001.nocturne.core.glance.WakeTrigger
 import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
+import io.github.anbu00001.nocturne.data.LaptopSpanEntity
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.NightTotals
 import io.github.anbu00001.nocturne.data.SessionEntity
@@ -75,6 +76,8 @@ data class LastNightState(
     val totals: NightTotals? = null,
     val night: NightEntity? = null,
     val report: SleepReportEntity? = null,
+    /** Phase 4: laptop use sent from the laptop, noon to noon. */
+    val laptop: List<LaptopSpanEntity> = emptyList(),
     val glanceMedian: Double? = null,
     val priorNights: Int = 0,
     val hasEarlier: Boolean = false,
@@ -84,6 +87,7 @@ data class LastNightState(
 class LastNightViewModel(app: NocturneApp) : ViewModel() {
     private val sessionDao = app.database.sessions()
     private val sleepDao = app.database.sleep()
+    private val laptopDao = app.database.laptop()
 
     /** Null means the default: the latest night that has finished, not tonight's, which is still running. */
     private val selectedDate = MutableStateFlow<String?>(null)
@@ -99,7 +103,15 @@ class LastNightViewModel(app: NocturneApp) : ViewModel() {
                 flowOf(LastNightState())
             } else {
                 val index = dates.indexOf(date)
-                combine(sessionDao.observeNight(date), sleepDao.observeNight(date), sleepDao.observeReport(date)) { sessions, night, report ->
+                // Noon to noon at the offset in force now; laptop spans only mark the timeline, so a zone change is harmless.
+                val noon = LocalDate.parse(date).toEpochDay() * LocalClock.DAY_MS + LocalClock.NIGHT_BOUNDARY_HOUR * LocalClock.HOUR_MS -
+                    currentOffsetMinutes() * LocalClock.MINUTE_MS
+                combine(
+                    sessionDao.observeNight(date),
+                    sleepDao.observeNight(date),
+                    sleepDao.observeReport(date),
+                    laptopDao.observeOverlapping(noon, noon + LocalClock.DAY_MS),
+                ) { sessions, night, report, laptop ->
                     val prior = totals.filter { it.nightDate < date }.takeLast(MEDIAN_NIGHTS)
                     LastNightState(
                         nightDate = date,
@@ -107,6 +119,7 @@ class LastNightViewModel(app: NocturneApp) : ViewModel() {
                         totals = totals.firstOrNull { it.nightDate == date },
                         night = night,
                         report = report,
+                        laptop = laptop,
                         glanceMedian = prior.takeIf { it.size >= MIN_NIGHTS_FOR_MEDIAN }?.map { it.glances }?.median(),
                         priorNights = prior.size,
                         hasEarlier = index < dates.lastIndex,
@@ -191,6 +204,7 @@ fun LastNightScreen(app: NocturneApp) {
                         ),
                     )
                     Text(Tone.Light.coverage(night.lightMeasuredMinutes, night.lightScreenMinutes), color = muted)
+                    if (night.lightLaptopMinutes > 0) Text(Tone.Laptop.eveningMinutes(night.lightLaptopMinutes), color = muted)
                     if (night.suppressionDurationClamped) {
                         Text(Tone.Light.DURATION_CLAMPED, style = MaterialTheme.typography.bodySmall, color = muted)
                     }
@@ -201,7 +215,7 @@ fun LastNightScreen(app: NocturneApp) {
             SleepSummary(night, onEnter = { entering = true }, onRemove = { app.removeSleepReport(nightDate) })
         }
         item {
-            NightTimeline(nightDate, state.sessions, night, window, Modifier.fillMaxWidth().height(132.dp))
+            NightTimeline(nightDate, state.sessions, state.laptop, night, window, Modifier.fillMaxWidth().height(140.dp))
         }
         item {
             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -363,7 +377,14 @@ private fun SessionRow(s: SessionEntity, labels: AppLabels) {
  * so nothing is clamped. Positions use the local time captured with each session.
  */
 @Composable
-private fun NightTimeline(nightDate: String, sessions: List<SessionEntity>, night: NightEntity?, window: EveningWindow, modifier: Modifier) {
+private fun NightTimeline(
+    nightDate: String,
+    sessions: List<SessionEntity>,
+    laptop: List<LaptopSpanEntity>,
+    night: NightEntity?,
+    window: EveningWindow,
+    modifier: Modifier,
+) {
     val measurer = rememberTextMeasurer()
     val colors = MaterialTheme.colorScheme
     val labelStyle = MaterialTheme.typography.labelSmall.copy(color = colors.onSurfaceVariant)
@@ -377,7 +398,7 @@ private fun NightTimeline(nightDate: String, sessions: List<SessionEntity>, nigh
         fun x(localMs: Long) = ((localMs - startLocal).toFloat() / spanMs).coerceIn(0f, 1f) * size.width
         val tickBottom = 18.dp.toPx()
         val barTop = 26.dp.toPx()
-        val barBottom = size.height - 30.dp.toPx()
+        val barBottom = size.height - 38.dp.toPx()
 
         val windowStart = x(startLocal + sinceBoundary(window.startMinute))
         val windowEnd = x(startLocal + sinceBoundary(window.endMinute))
@@ -401,18 +422,30 @@ private fun NightTimeline(nightDate: String, sessions: List<SessionEntity>, nigh
             }
         }
 
+        val lineHeight = 4.dp.toPx()
         val onset = night?.estimatedSleepOnset
         val wake = night?.estimatedWakeTime
         if (night != null && onset != null && wake != null) {
             val shift = night.utcOffsetMinutes * LocalClock.MINUTE_MS
             val a = x(onset + shift)
             val b = x(wake + shift)
-            val height = 4.dp.toPx()
             drawRoundRect(
                 colors.secondary,
                 Offset(a, barBottom + 5.dp.toPx()),
-                Size(maxOf(b - a, minWidth), height),
-                CornerRadius(height / 2),
+                Size(maxOf(b - a, minWidth), lineHeight),
+                CornerRadius(lineHeight / 2),
+            )
+        }
+
+        val laptopShift = (night?.utcOffsetMinutes ?: sessions.firstOrNull()?.utcOffsetMinutes ?: currentOffsetMinutes()) * LocalClock.MINUTE_MS
+        for (span in laptop) {
+            val a = x(span.startTs + laptopShift)
+            val b = x(span.endTs + laptopShift)
+            drawRoundRect(
+                colors.tertiary,
+                Offset(a, barBottom + 13.dp.toPx()),
+                Size(maxOf(b - a, minWidth), lineHeight),
+                CornerRadius(lineHeight / 2),
             )
         }
     }

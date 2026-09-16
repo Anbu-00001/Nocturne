@@ -95,6 +95,8 @@ object SleepNights {
         charging: List<LongRange> = emptyList(),
         dataFromTs: Long = Long.MIN_VALUE,
         dataToTs: Long = Long.MAX_VALUE,
+        /** Laptop use across the history, sorted and disjoint (LaptopActivity.merged). */
+        laptop: List<LongRange> = emptyList(),
     ): List<NightInput> =
         sessions.groupBy { nightOf(it.session.startTs, it.offsetMinutes) }
             .toSortedMap()
@@ -103,7 +105,15 @@ object SleepNights {
                 val offset = sorted.first().offsetMinutes
                 val from = groupStartUtc(date, offset)
                 val to = from + LocalClock.DAY_MS
-                NightInput(date, offset, sorted.map { it.session }, charging.filter { it.last > from && it.first < to }, dataFromTs, dataToTs)
+                NightInput(
+                    date,
+                    offset,
+                    sorted.map { it.session },
+                    charging.filter { it.last > from && it.first < to },
+                    dataFromTs,
+                    dataToTs,
+                    laptop.filter { it.last >= from && it.first < to },
+                )
             }
 
     /**

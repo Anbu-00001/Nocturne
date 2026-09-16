@@ -49,5 +49,15 @@
         <receiver
             android:name=".focus.FocusAlarmReceiver"
             android:exported="false" />
+
+        <!-- Phase 4: laptop use in, sessions and nights out, over adb's `content` command. DUMP is held by adb's shell and
+             cannot be granted to ordinary apps, so no app on the phone can read the history through this. -->
+        <provider
+            android:name=".laptop.LaptopBridgeProvider"
+            android:authorities="${applicationId}.laptop"
+            android:exported="true"
+            android:readPermission="android.permission.DUMP"
+            android:writePermission="android.permission.DUMP"
+            tools:ignore="ExportedContentProvider" />
     </application>
 </manifest>

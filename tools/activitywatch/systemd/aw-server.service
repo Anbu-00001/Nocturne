@@ -1,0 +1,14 @@
+# ActivityWatch's server for Nocturne (Phase 4). Unpacked, not installed: the release .deb's opt/activitywatch/aw-server-rust
+# and aw-server/aw_server/static copied to ~/.local/opt/activitywatch/{aw-server-rust,webui}. See docs/PHASES.md.
+[Unit]
+Description=ActivityWatch server (aw-server-rust)
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/.local/opt/activitywatch/aw-server-rust/aw-server-rust --webpath %h/.local/opt/activitywatch/webui
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

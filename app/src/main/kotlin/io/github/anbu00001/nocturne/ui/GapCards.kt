@@ -44,11 +44,17 @@ import java.time.format.DateTimeFormatter
 @Composable
 fun GapCardHost(app: NocturneApp, harvest: Job?) {
     var card by remember { mutableStateOf<Reflections.Card?>(null) }
+    var laptopMs by remember { mutableStateOf(0L) }
     var answered by remember { mutableStateOf<GapLabel?>(null) }
     LaunchedEffect(harvest) {
         harvest?.join()
         // An answered card is not offered again, so each visit starts from what the rules say now.
-        card = withContext(Dispatchers.IO) { app.reflections.card(app.deviceProfile.sleepConfig()) }
+        val (found, atLaptop) = withContext(Dispatchers.IO) {
+            val next = app.reflections.card(app.deviceProfile.sleepConfig())
+            next to (next?.let { app.reflections.laptopMs(it.gap) } ?: 0L)
+        }
+        card = found
+        laptopMs = atLaptop
         answered = null
     }
     val shown = card ?: return
@@ -61,6 +67,9 @@ fun GapCardHost(app: NocturneApp, harvest: Job?) {
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(Tone.Reflect.phoneDown(clockText(shown.gap.startTs, offset), clockText(shown.gap.endTs, offset)), style = MaterialTheme.typography.titleMedium)
+            if (laptopMs >= LocalClock.MINUTE_MS) {
+                Text(Tone.Reflect.atLaptop(Tone.duration(laptopMs)), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             val label = answered
             if (label == null) {
                 LabelButtons { chosen ->
@@ -120,6 +129,7 @@ private fun LabelButtons(onLabel: (GapLabel) -> Unit) {
 @Composable
 fun GapsSection(app: NocturneApp) {
     var unlabelled by remember { mutableStateOf<List<PhoneDownGap>?>(null) }
+    var laptop by remember { mutableStateOf<Map<Long, Long>>(emptyMap()) }
     var totals by remember { mutableStateOf<Map<GapLabel, Long>>(emptyMap()) }
     var open by rememberSaveable { mutableStateOf(false) }
     var labelled by remember { mutableIntStateOf(0) }
@@ -127,6 +137,7 @@ fun GapsSection(app: NocturneApp) {
         val (gaps, byLabel) = withContext(Dispatchers.IO) {
             app.reflections.unlabelled(app.deviceProfile.sleepConfig()) to app.reflections.weekByLabel()
         }
+        laptop = withContext(Dispatchers.IO) { gaps.associate { it.startTs to app.reflections.laptopMs(it) } }
         unlabelled = gaps
         totals = byLabel
     }
@@ -148,7 +159,8 @@ fun GapsSection(app: NocturneApp) {
             for (gap in gaps) {
                 key(gap.startTs) {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text(Tone.Reflect.gapLine(dayText(gap.startTs, offset), clockText(gap.startTs, offset), clockText(gap.endTs, offset), Tone.duration(gap.durationMs)))
+                        val atLaptop = laptop[gap.startTs]?.takeIf { it >= LocalClock.MINUTE_MS }?.let(Tone::duration)
+                        Text(Tone.Reflect.gapLine(dayText(gap.startTs, offset), clockText(gap.startTs, offset), clockText(gap.endTs, offset), Tone.duration(gap.durationMs), atLaptop))
                         LabelButtons { label ->
                             unlabelled = gaps - gap
                             app.appScope.launch {

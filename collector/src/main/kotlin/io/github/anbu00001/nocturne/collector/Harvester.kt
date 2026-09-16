@@ -86,6 +86,11 @@ class Harvester(
         derived.recomputeNights(sleepConfig())
     }
 
+    /** Stores what [change] writes and re-derives the nights it can move (DerivedTables.updateNights), under the harvest lock. */
+    suspend fun updateNights(change: suspend () -> Long?): Int = mutex.withLock {
+        derived.updateNights(sleepConfig(), change)
+    }
+
     /** Called with the exact time from ACTION_TIMEZONE_CHANGED; each harvest also checks, in case it was missed. */
     suspend fun recordZone(at: Long, zoneId: String) {
         val latest = db.harvest().latestZone()

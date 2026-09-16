@@ -76,6 +76,20 @@ class ReflectionsTest {
     private fun reflections() = Reflections(db, now = { now }, fallbackZoneId = { "Asia/Kolkata" })
 
     @Test
+    fun laptopTimeInsideAGapCountsOnceWhateverTheLaptop() = runTest {
+        db.laptop().insertSpans(
+            listOf(
+                LaptopSpanEntity("workbook", at("09:30"), at("10:30"), null, null),
+                LaptopSpanEntity("desk", at("10:00"), at("11:00"), 0.5, false),
+                LaptopSpanEntity("workbook", at("13:00"), at("14:00"), null, null),
+            ),
+        )
+        val gap = PhoneDownGap(at("10:00"), at("12:00"))
+        assertEquals(60 * 60_000L, reflections().laptopMs(gap))
+        assertEquals(0L, reflections().laptopMs(PhoneDownGap(at("11:00"), at("12:30"))))
+    }
+
+    @Test
     fun aCardIsRecordedOnceAnsweredOnceAndTheWeeklyListTakesTheRest() = runTest {
         givenTheNightBefore()
         for (time in listOf("06:00", "08:00", "10:00", "13:00")) unlock(time)

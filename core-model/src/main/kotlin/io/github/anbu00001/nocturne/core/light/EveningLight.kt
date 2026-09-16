@@ -23,19 +23,27 @@ data class LightReading(
 /** A stretch with the screen on, from a derived session. */
 data class ScreenSpan(val startTs: Long, val endTs: Long)
 
+/**
+ * A stretch at a computer (spec §9 Phase 4), the second emitter of §6.1: its backlight's share of its range and its night
+ * filter, each null where the laptop did not record it, and its panel. What the screen shows is never known, so the band
+ * covers both dark and light content.
+ */
+data class LaptopScreen(val startTs: Long, val endTs: Long, val backlight: Double?, val warmFilter: Boolean?, val profile: DisplayProfile)
+
 data class EveningInterval(val startTs: Long, val endTs: Long)
 
 /** What the evening model assumes wherever nothing was measured. Each is a stated assumption, not a finding. */
 data class UnmeasuredLight(
     /**
      * With the screen off the room is not measured. The low end assumes dark straight away; the middle keeps the
-     * last room reading this long (a phone put down in a lit room), then assumes dark; the high end keeps the last
-     * reading, or the evening prior when there is none, until the interval ends.
+     * last room reading this long after the phone's screen or a laptop was last in use (a phone put down in a lit room,
+     * someone still at the laptop), then assumes dark; the high end keeps the last reading, or the evening prior when
+     * there is none, until the interval ends.
      */
     val screenOffCarryMs: Long = 30 * LocalClock.MINUTE_MS,
     /** A sample this close to a screen-on minute still describes it; the sampler writes every 30 s. */
     val sampleReachMs: Long = 90_000,
-    /** Screen on with no sample: brightness anywhere in this share of the setting's range. */
+    /** Screen on with no sample, or a laptop that did not record its backlight: brightness anywhere in this share of the range. */
     val brightnessShare: Band = Band(0.0, 0.3, 0.8),
 )
 
@@ -45,13 +53,16 @@ data class EveningLightEstimate(
     val screenMinutes: Int,
     /** Of those, the minutes a light sample covered. */
     val measuredMinutes: Int,
+    /** Minutes in which someone was at a laptop. */
+    val laptopMinutes: Int = 0,
 )
 
-internal data class MinuteLight(val bands: List<Band>, val screenMinutes: Int, val measuredMinutes: Int)
+internal data class MinuteLight(val bands: List<Band>, val screenMinutes: Int, val measuredMinutes: Int, val laptopMinutes: Int = 0)
 
 /**
  * Spec §6.1 and §6.2 over a real evening: a melanopic EDI band for every minute, from the screen sessions the
- * harvester derived and the samples the light service wrote, then Giménez suppression over the lot.
+ * harvester derived, the samples the light service wrote and any laptop use, then Giménez suppression over the lot.
+ * Light from the phone and a laptop add up: a lit laptop screen still reaches the eyes while the phone is read.
  */
 object EveningLight {
 
@@ -103,13 +114,28 @@ object EveningLight {
         assumptions: LightAssumptions = LightAssumptions(),
         unmeasured: UnmeasuredLight = UnmeasuredLight(),
         sensitivity: Double = 1.0,
+        laptop: List<LaptopScreen> = emptyList(),
     ): EveningLightEstimate {
-        val minutes = minutes(interval, screen, samples, profile, assumptions, unmeasured)
+        val minutes = minutes(interval, screen, samples, profile, assumptions, unmeasured, laptop)
         return EveningLightEstimate(
             EveningExposure.estimate(minutes.bands, sensitivity = sensitivity),
             minutes.screenMinutes,
             minutes.measuredMinutes,
+            minutes.laptopMinutes,
         )
+    }
+
+    /** A laptop screen's light at the eyes, at its own viewing distance. */
+    fun laptopAtEyes(
+        backlight: Double?,
+        warmFilter: Boolean?,
+        profile: DisplayProfile,
+        assumptions: LightAssumptions = LightAssumptions(),
+        unmeasured: UnmeasuredLight = UnmeasuredLight(),
+    ): Band {
+        val share = backlight?.let(Band::exact) ?: unmeasured.brightnessShare
+        fun at(s: Double) = modes(profile.luminanceAtShare(s), darkUi = null, warmFilter, profile, assumptions, assumptions.laptopViewingDistanceM)
+        return Band(at(share.low).low, at(share.mid).mid, at(share.high).high)
     }
 
     internal fun minutes(
@@ -119,16 +145,21 @@ object EveningLight {
         profile: DisplayProfile,
         assumptions: LightAssumptions,
         unmeasured: UnmeasuredLight,
+        laptop: List<LaptopScreen> = emptyList(),
     ): MinuteLight {
         val spans = screen.sortedBy { it.startTs }
+        val laptops = laptop.sortedBy { it.startTs }
+        val laptopBands = HashMap<LaptopScreen, Band>()
         val sorted = samples.sortedBy { it.startTs }
         val prior = LightDose.ambientMelanopicEdi(null, evening = true, assumptions = assumptions)
         val bands = ArrayList<Band>()
         var screenMinutes = 0
         var measuredMinutes = 0
+        var laptopMinutes = 0
         var room: Band? = null
-        var lastScreenOnTs = 0L
+        var lastPresentTs = 0L
         var spanFrom = 0
+        var laptopFrom = 0
         var sampleFrom = 0
         var t = interval.startTs
         while (t < interval.endTs) {
@@ -142,13 +173,28 @@ object EveningLight {
                 val o = overlap(spans[i].startTs, spans[i].endTs, t, end)
                 if (o > 0) {
                     on += o
-                    lastScreenOnTs = maxOf(lastScreenOnTs, minOf(spans[i].endTs, end))
+                    lastPresentTs = maxOf(lastPresentTs, minOf(spans[i].endTs, end))
                 }
                 i++
             }
             on = minOf(on, length)
 
             var band = Band.ZERO
+            while (laptopFrom < laptops.size && laptops[laptopFrom].endTs <= t) laptopFrom++
+            var atLaptop = false
+            var j = laptopFrom
+            while (j < laptops.size && laptops[j].startTs < end) {
+                val l = laptops[j]
+                val o = overlap(l.startTs, l.endTs, t, end)
+                if (o > 0) {
+                    atLaptop = true
+                    lastPresentTs = maxOf(lastPresentTs, minOf(l.endTs, end))
+                    val lit = laptopBands.getOrPut(l) { laptopAtEyes(l.backlight, l.warmFilter, l.profile, assumptions, unmeasured) }
+                    band += lit.times(o.toDouble() / length)
+                }
+                j++
+            }
+            if (atLaptop) laptopMinutes++
             if (on > 0) {
                 screenMinutes++
                 while (sampleFrom < sorted.size && sorted[sampleFrom].endTs <= t - unmeasured.sampleReachMs) sampleFrom++
@@ -162,13 +208,13 @@ object EveningLight {
             val off = length - on
             if (off > 0) {
                 val last = room
-                val carriedMid = if (last != null && t - lastScreenOnTs <= unmeasured.screenOffCarryMs) last.mid else 0.0
+                val carriedMid = if (last != null && t - lastPresentTs <= unmeasured.screenOffCarryMs) last.mid else 0.0
                 band += Band(0.0, carriedMid, (last ?: prior).high).times(off.toDouble() / length)
             }
             bands += band.times(length.toDouble() / LocalClock.MINUTE_MS)
             t = end
         }
-        return MinuteLight(bands, screenMinutes, measuredMinutes)
+        return MinuteLight(bands, screenMinutes, measuredMinutes, laptopMinutes)
     }
 
     private fun screen(
@@ -187,11 +233,18 @@ object EveningLight {
         return Band(at(share.low).low, at(share.mid).mid, at(share.high).high)
     }
 
-    /** A display mode the phone would not report widens the band to cover both. */
-    private fun modes(nits: Double, darkUi: Boolean?, warmFilter: Boolean?, profile: DisplayProfile, assumptions: LightAssumptions): Band {
+    /** A display mode the device would not report widens the band to cover both. */
+    private fun modes(
+        nits: Double,
+        darkUi: Boolean?,
+        warmFilter: Boolean?,
+        profile: DisplayProfile,
+        assumptions: LightAssumptions,
+        distanceM: Band = assumptions.viewingDistanceM,
+    ): Band {
         val darks = darkUi?.let { listOf(it) } ?: listOf(true, false)
         val warms = warmFilter?.let { listOf(it) } ?: listOf(true, false)
-        val bands = darks.flatMap { dark -> warms.map { warm -> LightDose.screenMelanopicEdi(nits, profile, dark, warm, assumptions) } }
+        val bands = darks.flatMap { dark -> warms.map { warm -> LightDose.screenMelanopicEdi(nits, profile, dark, warm, assumptions, distanceM) } }
         return Band(bands.minOf { it.low }, bands.sumOf { it.mid } / bands.size, bands.maxOf { it.high })
     }
 

@@ -3,9 +3,11 @@ package io.github.anbu00001.nocturne.data
 import androidx.room.withTransaction
 import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
 import io.github.anbu00001.nocturne.core.glance.ClassifierConfig
+import io.github.anbu00001.nocturne.core.laptop.LaptopActivity
 import io.github.anbu00001.nocturne.core.light.DisplayProfile
 import io.github.anbu00001.nocturne.core.light.EveningLight
 import io.github.anbu00001.nocturne.core.light.EveningLightEstimate
+import io.github.anbu00001.nocturne.core.light.LaptopScreen
 import io.github.anbu00001.nocturne.core.light.LightAssumptions
 import io.github.anbu00001.nocturne.core.light.LightReading
 import io.github.anbu00001.nocturne.core.light.ScreenSpan
@@ -70,6 +72,19 @@ class DerivedTables(
     }
 
     /**
+     * Writes primary data nights depend on with [change] (laptop use, Phase 4), then re-derives the nights from the instant
+     * it returns, in one transaction: a crash cannot leave the data stored and the nights not following it. Null from
+     * [change] means nothing a night depends on changed. Returns nights written.
+     */
+    suspend fun updateNights(sleep: SleepConfig, change: suspend () -> Long?): Int = db.withTransaction {
+        val changedFromTs = change() ?: return@withTransaction 0
+        val run = run(sleep)
+        val pass = nights.recompute(changedFromTs, sleep, run)
+        windows.recompute(pass.from, run)
+        pass.written
+    }
+
+    /**
      * The run for the configuration in force. The classifier's package lists are left out: they follow apps the phone
      * resolves, and a new launcher is not a new model.
      */
@@ -81,7 +96,7 @@ class DerivedTables(
 
 /**
  * Rebuilds the nights table, and each session's evening-window and sleep-onset tags, from sessions, the
- * user's sleep reports, charging samples and light samples (spec §6.2, §6.3). Like SessionRecomputer,
+ * user's sleep reports, charging samples, light samples and laptop use (spec §6.2, §6.3, §9 Phase 4). Like SessionRecomputer,
  * incremental and full runs share one path and write the same rows; NightRecomputerTest checks that.
  */
 class NightRecomputer(private val db: NocturneDatabase, private val display: DisplayProfile = DisplayProfile.GENERIC) {
@@ -114,19 +129,24 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
         val context = if (from == null) emptyList() else stored.filterKeys { it < from }.toSortedMap().values.map { it.toNightSleep(reports) }
         val loadFromTs = if (from == null) Long.MIN_VALUE else SleepNights.groupStartUtc(from, restartOffset) - LocalClock.HOUR_MS
         val samples = sleep.powerSamplesFrom(if (from == null) Long.MIN_VALUE else loadFromTs - LocalClock.DAY_MS)
+        val laptopSpans = if (from == null) db.laptop().allSpans() else db.laptop().overlapping(loadFromTs, Long.MAX_VALUE)
         val dataToTs = maxOf(raw.lastTimestamp() ?: Long.MIN_VALUE, db.harvest().cursor() ?: Long.MIN_VALUE)
         val inputs = SleepNights.inputs(
             sessions = sessions.startingFrom(loadFromTs).map { OffsetSession(it.toNightSession(), it.utcOffsetMinutes) },
             charging = SleepNights.chargingIntervals(samples.map { it.timestamp to it.charging }),
             dataFromTs = raw.firstTimestamp() ?: Long.MAX_VALUE,
             dataToTs = dataToTs,
+            laptop = LaptopActivity.merged(laptopSpans.map { it.toLaptopSpan() }),
         ).filter { from == null || it.date >= from }
         val fresh = SleepNights.infer(context, inputs, reports, config).associateBy { it.date }
         val all = context + fresh.values.sortedBy { it.date }
         val contextByDate = context.associateBy { it.date }
         val lightDataToTs = maxOf(dataToTs, db.light().lastEnd() ?: Long.MIN_VALUE)
+        val panels = db.laptop().hosts().associate { it.host to it.display().profile() }
 
-        val dates = (sessions.nightDates().map(LocalDate::parse) + fresh.keys).toSortedSet()
+        // Earlier nights kept from the store are revisited too: a night only inference sees (sessions before 17:00 group
+        // with the night before, the sessions table files them under their own day) must still follow window changes.
+        val dates = (sessions.nightDates().map(LocalDate::parse) + fresh.keys + contextByDate.keys).toSortedSet()
         val windows = SleepNights.windowsFor(dates, all, config)
         val rows = ArrayList<NightEntity>()
         for (date in dates) {
@@ -141,7 +161,7 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
             val eveningMinutes = (sessions.eveningScreenMs(key) / LocalClock.MINUTE_MS).toInt()
             val nightSessions = sessions.forNight(key)
             val offset = night?.offsetMinutes ?: nightSessions.firstOrNull()?.utcOffsetMinutes ?: restartOffset
-            val light = lightFor(date, offset, window.window, night?.onsetTs, nightSessions, lightDataToTs)
+            val light = lightFor(date, offset, window.window, night?.onsetTs, nightSessions, lightDataToTs, panels)
             rows += when {
                 night != null -> night.toEntity(eveningMinutes)
                 else -> NightEntity(key, null, null, 0f, SleepSource.INFERRED, eveningMinutes, 0, null, null, null, null, null, utcOffsetMinutes = offset)
@@ -163,15 +183,20 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
         onsetTs: Long?,
         nightSessions: List<SessionEntity>,
         dataToTs: Long,
+        panels: Map<String, DisplayProfile>,
     ): EveningLightEstimate? {
         val interval = EveningLight.interval(date, offsetMinutes, window, onsetTs, dataToTs) ?: return null
         val samples = db.light().overlapping(interval.startTs - SAMPLE_REACH_MS, interval.endTs + SAMPLE_REACH_MS)
         if (samples.none { it.timestamp < interval.endTs && it.timestamp + it.durationMs > interval.startTs }) return null
+        val laptop = db.laptop().overlapping(interval.startTs, interval.endTs).mapNotNull { span ->
+            panels[span.host]?.let { LaptopScreen(span.startTs, span.endTs, span.backlight, span.warmFilter, it) }
+        }
         return EveningLight.estimate(
             interval,
             nightSessions.map { ScreenSpan(it.startTs, it.endTs) },
             samples.map { LightReading(it.timestamp, it.durationMs, it.ambientLux?.toDouble(), it.brightnessSetting, it.darkUi, it.warmFilter) },
             display,
+            laptop = laptop,
         )
     }
 
@@ -238,6 +263,7 @@ private fun NightEntity.withLight(light: EveningLightEstimate?) = copy(
     melanopicDoseLuxHours = light?.suppression?.melanopicDoseLuxHours?.mid?.toFloat(),
     lightScreenMinutes = light?.screenMinutes ?: 0,
     lightMeasuredMinutes = light?.measuredMinutes ?: 0,
+    lightLaptopMinutes = light?.laptopMinutes ?: 0,
     suppressionDurationClamped = light?.suppression?.durationClamped ?: false,
 )
 

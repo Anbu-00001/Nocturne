@@ -9,3 +9,7 @@ captures/
 .externalNativeBuild/
 .DS_Store
 bin/
+
+# Python tools (tools/): caches and the reference environments
+__pycache__/
+.venv/

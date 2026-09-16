@@ -52,15 +52,30 @@ data class DisplayProfile(
         require(peakNits > minNits && minNits >= 0 && screenAreaM2 > 0 && brightnessSettingMax > brightnessSettingMin)
     }
 
-    fun luminanceNits(brightnessSetting: Int): Double {
-        val t = ((brightnessSetting - brightnessSettingMin).toDouble() / (brightnessSettingMax - brightnessSettingMin))
-            .coerceIn(0.0, 1.0)
+    fun luminanceNits(brightnessSetting: Int): Double =
+        luminanceAtShare((brightnessSetting - brightnessSettingMin).toDouble() / (brightnessSettingMax - brightnessSettingMin))
+
+    /** Luminance at [share] of the brightness range, 0 to 1. */
+    fun luminanceAtShare(share: Double): Double {
+        val t = share.coerceIn(0.0, 1.0)
         val linear = if (settingIsLinear) t else Math.pow(t, PERCEPTUAL_GAMMA)
         return minNits + (peakNits - minNits) * linear
     }
 
     companion object {
         const val PERCEPTUAL_GAMMA = 2.2
+
+        /**
+         * A computer's panel, whose brightness arrives as a share of the backlight's range rather than a setting. Linux
+         * backlight drivers set a PWM duty cycle, which is close to linear in luminance.
+         */
+        fun panel(minNits: Double, peakNits: Double, widthMm: Int, heightMm: Int) = DisplayProfile(
+            minNits = minNits,
+            peakNits = peakNits,
+            screenAreaM2 = widthMm * heightMm / 1_000_000.0,
+            brightnessSettingMin = 0,
+            brightnessSettingMax = 1,
+        )
 
         /** Active area of a rectangular panel from its diagonal and pixel dimensions. */
         fun areaM2(diagonalInches: Double, widthPx: Int, heightPx: Int): Double {
@@ -101,6 +116,11 @@ data class LightAssumptions(
     /** Spec §6.1: measured smartphone viewing distance is about 30 to 37 cm. */
     val viewingDistanceM: Band = Band(0.25, 0.35, 0.45),
     /**
+     * Eyes to a laptop screen (Phase 4). Measured computer viewing distances average 56 to 62 cm (SD 8 to 10), and
+     * laptops sit nearer than desktop monitors; the ergonomic range is 50 to 70 cm.
+     */
+    val laptopViewingDistanceM: Band = Band(0.4, 0.55, 0.7),
+    /**
      * Average fraction of full-white luminance the content shows. An assumption, not measured:
      * a dark interface is mostly black, a light one mostly white.
      */
@@ -127,7 +147,9 @@ object LightDose {
 
     /**
      * mEDI from the screen: E = L · level · A / d² for a small emitter viewed face-on (the solid-angle
-     * factor k_geom is 1 at these distances), times the display's MDER.
+     * factor k_geom is 1 at these distances), times the display's MDER. A laptop passes its own [distanceM]. Its
+     * panel is large for that: against the exact value for a disc of equal area, A / d² overstates by about 8% at
+     * 55 cm and 15% at 40 cm, well inside the band.
      */
     fun screenMelanopicEdi(
         luminanceNits: Double,
@@ -135,10 +157,11 @@ object LightDose {
         darkUi: Boolean,
         warmFilter: Boolean,
         assumptions: LightAssumptions = LightAssumptions(),
+        distanceM: Band = assumptions.viewingDistanceM,
     ): Band {
         val level = if (darkUi) assumptions.darkUiContentLevel else assumptions.lightUiContentLevel
         val mder = if (warmFilter) assumptions.warmFilterMder else assumptions.displayMder
-        val d = assumptions.viewingDistanceM
+        val d = distanceM
         fun edi(distance: Double, contentLevel: Double, efficacy: Double) =
             luminanceNits * contentLevel * profile.screenAreaM2 / (distance * distance) * efficacy
         return Band(

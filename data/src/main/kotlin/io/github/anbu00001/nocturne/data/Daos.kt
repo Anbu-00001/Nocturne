@@ -210,6 +210,52 @@ interface ReflectionDao {
 }
 
 @Dao
+interface LaptopDao {
+    @Query("SELECT * FROM laptop_spans WHERE host = :host AND startTs >= :fromTs AND startTs < :toTs ORDER BY startTs")
+    suspend fun spansStarting(host: String, fromTs: Long, toTs: Long): List<LaptopSpanEntity>
+
+    @Query("DELETE FROM laptop_spans WHERE host = :host AND startTs >= :fromTs AND startTs < :toTs")
+    suspend fun deleteSpans(host: String, fromTs: Long, toTs: Long): Int
+
+    @Insert
+    suspend fun insertSpans(spans: List<LaptopSpanEntity>)
+
+    /**
+     * Spans overlapping [fromTs, toTs], ends included, so a moment of input on the boundary still counts. Spans are cut
+     * at display changes and idle, so none is expected to run past a day; the index bound allows that much.
+     */
+    @Query(
+        """SELECT * FROM laptop_spans
+           WHERE startTs >= :fromTs - 86400000 AND startTs <= :toTs AND endTs >= :fromTs
+           ORDER BY startTs""",
+    )
+    suspend fun overlapping(fromTs: Long, toTs: Long): List<LaptopSpanEntity>
+
+    @Query("SELECT * FROM laptop_spans ORDER BY startTs")
+    suspend fun allSpans(): List<LaptopSpanEntity>
+
+    /** [overlapping] as it changes, for a night's timeline. */
+    @Query(
+        """SELECT * FROM laptop_spans
+           WHERE startTs >= :fromTs - 86400000 AND startTs <= :toTs AND endTs >= :fromTs
+           ORDER BY startTs""",
+    )
+    fun observeOverlapping(fromTs: Long, toTs: Long): Flow<List<LaptopSpanEntity>>
+
+    @Upsert
+    suspend fun upsertHost(host: LaptopHostEntity)
+
+    @Query("SELECT * FROM laptop_hosts WHERE host = :host")
+    suspend fun host(host: String): LaptopHostEntity?
+
+    @Query("SELECT * FROM laptop_hosts ORDER BY host")
+    suspend fun hosts(): List<LaptopHostEntity>
+
+    @Query("SELECT * FROM laptop_hosts ORDER BY lastImportAt DESC")
+    fun observeHosts(): Flow<List<LaptopHostEntity>>
+}
+
+@Dao
 interface FocusDao {
     @Insert
     suspend fun insert(block: FocusBlockEntity): Long
