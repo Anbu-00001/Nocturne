@@ -1,8 +1,6 @@
 package io.github.anbu00001.nocturne.data
 
 import androidx.room.withTransaction
-import io.github.anbu00001.nocturne.core.focus.FocusTimer
-import io.github.anbu00001.nocturne.core.focus.RunningTimer
 import io.github.anbu00001.nocturne.core.light.EveningLight
 import io.github.anbu00001.nocturne.core.reflect.GapCard
 import io.github.anbu00001.nocturne.core.reflect.GapLabel
@@ -37,6 +35,13 @@ class Reflections(
             is GapCard.Open -> card.reflection.let { r -> Card(r.id, PhoneDownGap(r.gapStartTs!!, r.gapEndTs!!)) }
             is GapCard.Ask -> Card(db.reflections().insert(entity(card.gap, promptedAt = at, source = ReflectionSource.PROMPT)), card.gap)
         }
+    }
+
+    /** What [card] would do now, without recording a prompt: for checking the rules on the phone. */
+    suspend fun preview(config: SleepConfig): GapCard? {
+        val at = now()
+        val view = load(at, config)
+        return GapPrompts.card(at, view.offsetMinutes, view.atNight, view.gaps, view.reflections)
     }
 
     suspend fun answer(reflectionId: Long, label: GapLabel) = db.reflections().answer(reflectionId, label.rating, now())
@@ -118,21 +123,3 @@ internal fun quietIntervals(nights: List<NightEntity>): List<LongRange> = nights
 
 internal fun ReflectionEntity.toGapReflection() =
     GapReflection(id, source, promptedAt, gapStartTs, gapEndTs, GapLabel.ofRating(rating), dismissed)
-
-/** Focus blocks (spec §7): what was planned, when it ended, and the unlocks inside it. */
-class FocusBlocks(private val db: NocturneDatabase) {
-
-    /** Records a block that ran to [endTs], counting unlocks as sessions stand now; each later harvest recounts it. */
-    suspend fun record(timer: RunningTimer, endTs: Long, completed: Boolean): FocusBlockEntity {
-        val unlocks = db.sessions().unlockStartsBetween(timer.startTs, endTs)
-        val block = FocusBlockEntity(
-            startTs = timer.startTs,
-            endTs = endTs,
-            plannedMinutes = timer.plannedMinutes,
-            completed = completed,
-            interruptionCount = FocusTimer.interruptions(unlocks, timer.startTs, endTs),
-            label = null,
-        )
-        return block.copy(id = db.focus().insert(block))
-    }
-}

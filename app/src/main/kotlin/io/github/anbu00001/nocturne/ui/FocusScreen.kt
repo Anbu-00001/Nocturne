@@ -21,6 +21,7 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.anbu00001.nocturne.NocturneApp
@@ -41,6 +42,7 @@ fun FocusScreen(app: NocturneApp) {
     var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val offset = currentOffsetMinutes()
+    val context = LocalContext.current
 
     LaunchedEffect(running) {
         while (running != null) {
@@ -79,6 +81,8 @@ fun FocusScreen(app: NocturneApp) {
             }
         }
         if (!focus.exactAlarms) Text(Tone.Focus.INEXACT, style = MaterialTheme.typography.bodySmall, color = muted)
+        // Exempt apps skip standby buckets; in the restricted bucket Android allows one alarm a day.
+        if (!SystemAccess.isIgnoringBatteryOptimizations(context)) Text(Tone.Focus.NOT_EXEMPT, style = MaterialTheme.typography.bodySmall, color = muted)
 
         val weekFrom = System.currentTimeMillis() - 7 * LocalClock.DAY_MS
         val week = blocks.filter { it.startTs >= weekFrom }

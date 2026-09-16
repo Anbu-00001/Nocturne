@@ -82,6 +82,8 @@ object Tone {
         const val FOCUS_RUNNING = "Focus"
         const val BREAK_RUNNING = "Break"
         fun endsAt(clock: String) = "Ends at $clock"
+        const val NOT_EXEMPT =
+            "Battery optimisation is on for Nocturne. Android can then hold the end-of-block alarm back, in the strictest case to one alarm a day."
         const val INEXACT =
             "Android has not allowed exact alarms for Nocturne, so the end of a block may be signalled a few minutes late."
 

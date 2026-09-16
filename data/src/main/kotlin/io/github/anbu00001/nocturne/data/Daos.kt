@@ -64,10 +64,7 @@ abstract class RawEventDao {
     @Query("SELECT COUNT(*) FROM raw_events")
     abstract suspend fun count(): Long
 
-    /**
-     * Only for the user's explicit "delete all data". While schema 4's copy (raw_events_v4, see MIGRATION_4_5) is still
-     * kept, that must be dropped too, through the open helper: it is outside Room's entities.
-     */
+    /** Only for the user's explicit "delete all data". */
     @Transaction
     open suspend fun deleteAll() {
         deleteRows()
@@ -222,6 +219,10 @@ interface FocusDao {
 
     @Query("SELECT * FROM focus_blocks ORDER BY startTs")
     suspend fun all(): List<FocusBlockEntity>
+
+    /** For the debug receiver, to take test blocks back out of the history. */
+    @Query("DELETE FROM focus_blocks WHERE id = :id")
+    suspend fun delete(id: Long): Int
 
     /**
      * Interruptions are derived from sessions, so they follow every re-derivation of sessions: a block's count is
