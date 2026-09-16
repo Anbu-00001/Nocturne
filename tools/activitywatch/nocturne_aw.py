@@ -223,7 +223,7 @@ def phone_to_aw(aw: ActivityWatch, serial: str | None) -> dict:
     # What the top-bar indicator shows between syncs: the evening window and the latest night.
     summary = PhoneSummary.from_nights(rows(nights), synced_at=now_ms(), device=device)
     if summary:
-        summary.save()
+        summary.keeping_window_of(PhoneSummary.load()).save()
     counts = {}
     for bucket, kind, events in (
         (f"nocturne-sessions_{device}", "nocturne.session", session_events(sessions)),

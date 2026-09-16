@@ -61,6 +61,13 @@ class PhoneSummary:
         except (OSError, ValueError, TypeError):
             return None
 
+    def keeping_window_of(self, previous: PhoneSummary | None) -> PhoneSummary:
+        """An app too old to send its evening window keeps the last one known rather than forgetting it."""
+        if self.window_start_minute is not None or previous is None or previous.window_start_minute is None:
+            return self
+        return PhoneSummary(**{**asdict(self), "window_start_minute": previous.window_start_minute,
+                               "window_end_minute": previous.window_end_minute, "window_personal": previous.window_personal})
+
     @staticmethod
     def from_nights(rows: list[dict], synced_at: int, device: str) -> PhoneSummary | None:
         """From the phone's nights CSV rows: the latest night's window, and the latest night that has a verdict."""

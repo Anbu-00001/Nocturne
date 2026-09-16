@@ -114,6 +114,9 @@ class Summary(unittest.TestCase):
         summary = PhoneSummary.from_nights(rows, synced_at=1, device="x")
         self.assertIsNone(summary.window_start_minute)
         self.assertTrue(summary.last_no_sleep)
+        kept = summary.keeping_window_of(PHONE)
+        self.assertEqual((34, 750, True, 1), (kept.window_start_minute, kept.window_end_minute, kept.window_personal, kept.synced_at))
+        self.assertIs(PHONE, PHONE.keeping_window_of(summary))
 
 
 if __name__ == "__main__":

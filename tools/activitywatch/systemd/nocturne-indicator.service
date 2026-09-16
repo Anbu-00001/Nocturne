@@ -1,0 +1,13 @@
+# The moon in the top bar (Ubuntu AppIndicators). Edit the path if the repository moves.
+[Unit]
+Description=Nocturne top-bar indicator
+PartOf=graphical-session.target
+After=graphical-session.target aw-server.service
+
+[Service]
+ExecStart=/usr/bin/python3 -u %h/26_class/Nocturne/tools/activitywatch/nocturne_indicator.py
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target
