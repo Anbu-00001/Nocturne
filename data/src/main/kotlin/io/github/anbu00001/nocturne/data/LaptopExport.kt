@@ -10,7 +10,7 @@ object LaptopExport {
     const val SESSIONS_HEADER = "startTs,endTs,lastActivityTs,kind,unlocked,trigger,countsAsGlance,dominantPackage,utcOffsetMinutes,nightDate"
     const val NIGHTS_HEADER =
         "dateOfNight,onsetTs,wakeTs,confidence,source,noSleep,utcOffsetMinutes,suppressionLowPct,suppressionPct,suppressionHighPct," +
-            "eveningScreenMinutes,lightLaptopMinutes"
+            "eveningScreenMinutes,lightLaptopMinutes,eveningWindowStartMinute,eveningWindowEndMinute,windowPersonalised"
 
     /** Sessions starting at or after [fromTs]. Package names never hold commas, so no field needs quoting. */
     suspend fun sessions(db: NocturneDatabase, fromTs: Long, out: Appendable): Int = db.withTransaction {
@@ -33,7 +33,7 @@ object LaptopExport {
             out.append(
                 "${n.dateOfNight},${n.estimatedSleepOnset ?: ""},${n.estimatedWakeTime ?: ""},${n.confidence},${n.source},${n.noSleep}," +
                     "${n.utcOffsetMinutes},${n.suppressionLowPct ?: ""},${n.modelledSuppressionPct ?: ""},${n.suppressionHighPct ?: ""}," +
-                    "${n.eveningScreenMinutes},${n.lightLaptopMinutes}\n",
+                    "${n.eveningScreenMinutes},${n.lightLaptopMinutes},${n.eveningWindowStartMinute},${n.eveningWindowEndMinute},${n.windowPersonalised}\n",
             )
         }
         rows.size

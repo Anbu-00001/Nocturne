@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Before the evening window: a quiet crescent. -->
+  <defs><mask id="bite"><rect width="16" height="16" fill="#fff"/><circle cx="11.2" cy="5.2" r="5" fill="#000"/></mask></defs>
+  <circle cx="7.4" cy="8.6" r="6.2" fill="#f6f5f4" fill-opacity="0.6" mask="url(#bite)"/>
+</svg>

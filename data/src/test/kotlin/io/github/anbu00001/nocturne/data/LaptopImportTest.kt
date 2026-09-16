@@ -123,7 +123,8 @@ class LaptopImportTest {
         LaptopExport.nights(db, "2026-09-11", nights)
         val nightLines = nights.lines().filter { it.isNotEmpty() }
         assertEquals(LaptopExport.NIGHTS_HEADER, nightLines.first())
-        assertEquals(12, nightLines[1].split(',').size)
+        assertEquals(15, nightLines[1].split(',').size)
+        assertTrue(nightLines[1].endsWith(",true"))
         assertEquals("2026-09-11", nightLines[1].substringBefore(','))
     }
 

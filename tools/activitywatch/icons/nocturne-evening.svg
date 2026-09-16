@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+  <!-- Inside the evening window: the crescent in full, with a star. -->
+  <defs><mask id="bite"><rect width="16" height="16" fill="#fff"/><circle cx="11.2" cy="5.2" r="5" fill="#000"/></mask></defs>
+  <circle cx="7.4" cy="8.6" r="6.2" fill="#f6f5f4" mask="url(#bite)"/>
+  <path d="M13 1.2 L13.7 3 L15.5 3.7 L13.7 4.4 L13 6.2 L12.3 4.4 L10.5 3.7 L12.3 3 Z" fill="#f6f5f4"/>
+</svg>

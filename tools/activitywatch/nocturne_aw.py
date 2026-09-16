@@ -31,6 +31,7 @@ from pathlib import Path
 
 from awclient import SERVER, ActivityWatch, event_interval, iso, now_ms, parse_ts
 from laptop_state import afk_bucket, display_bucket, host_name, panel_size_mm, watch
+from tonight import PhoneSummary
 
 HEADER = "nocturne-laptop,1"
 AUTHORITY = "io.github.anbu00001.nocturne.laptop"
@@ -219,6 +220,10 @@ def phone_to_aw(aw: ActivityWatch, serial: str | None) -> dict:
     device = re.sub(r"[^A-Za-z0-9._-]", "-", adb("getprop", "ro.product.model", serial=serial).strip()) or "phone"
     sessions = adb("content", "read", "--uri", f"content://{AUTHORITY}/sessions?from=0", serial=serial)
     nights = adb("content", "read", "--uri", f"content://{AUTHORITY}/nights?from=2000-01-01", serial=serial)
+    # What the top-bar indicator shows between syncs: the evening window and the latest night.
+    summary = PhoneSummary.from_nights(rows(nights), synced_at=now_ms(), device=device)
+    if summary:
+        summary.save()
     counts = {}
     for bucket, kind, events in (
         (f"nocturne-sessions_{device}", "nocturne.session", session_events(sessions)),

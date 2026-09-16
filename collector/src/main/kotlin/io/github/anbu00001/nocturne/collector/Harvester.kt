@@ -86,6 +86,9 @@ class Harvester(
         derived.recomputeNights(sleepConfig())
     }
 
+    /** Runs [block] with no harvest or recompute under way, so derived tables hold still while it reads them (an export). */
+    suspend fun <T> whileIdle(block: suspend () -> T): T = mutex.withLock { block() }
+
     /** Stores what [change] writes and re-derives the nights it can move (DerivedTables.updateNights), under the harvest lock. */
     suspend fun updateNights(change: suspend () -> Long?): Int = mutex.withLock {
         derived.updateNights(sleepConfig(), change)

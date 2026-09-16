@@ -18,5 +18,5 @@ suspend fun RawEventDao.writeCsv(out: Appendable): Long {
     }
 }
 
-private fun csvField(value: String): String =
+internal fun csvField(value: String): String =
     if (value.any { it == ',' || it == '"' || it == '\n' }) "\"" + value.replace("\"", "\"\"") + "\"" else value

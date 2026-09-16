@@ -53,6 +53,7 @@ import io.github.anbu00001.nocturne.data.LightSampleEntity
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.PackageCount
 import io.github.anbu00001.nocturne.data.writeCsv
+import io.github.anbu00001.nocturne.export.FullExport
 import io.github.anbu00001.nocturne.tone.Tone
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -146,6 +147,18 @@ class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
         app.appScope.launch { _message.value = Tone.Settings.recomputed(app.harvester.recomputeAll()) }
     }
 
+    fun exportAll(uri: Uri) {
+        app.appScope.launch {
+            _message.value = try {
+                val summary = checkNotNull(app.contentResolver.openOutputStream(uri)) { "the file could not be opened" }
+                    .use { FullExport.write(app, it) }
+                Tone.Settings.exportedAll(summary.total, summary.rows.size)
+            } catch (e: Exception) {
+                Tone.Settings.exportFailed(e.message ?: e.javaClass.simpleName)
+            }
+        }
+    }
+
     fun export(uri: Uri) {
         app.appScope.launch {
             val rows = app.contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { app.database.rawEvents().writeCsv(it) }
@@ -178,6 +191,9 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
     val screenTimeoutMs = remember { app.deviceProfile.sleepConfig().screenOffTimeoutMs }
     val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/csv")) { uri ->
         if (uri != null) vm.export(uri)
+    }
+    val exportAllLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        if (uri != null) vm.exportAll(uri)
     }
     LaunchedEffect(Unit) { vm.refreshDiagnostics() }
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -339,6 +355,10 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
 
         HorizontalDivider()
         SectionTitle(Tone.Settings.DATA)
+        Button(onClick = { exportAllLauncher.launch(FullExport.fileName()) }) {
+            Text(Tone.Settings.EXPORT_ALL)
+        }
+        Text(Tone.Settings.EXPORT_ALL_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
         OutlinedButton(onClick = { exportLauncher.launch("nocturne-raw-events-${LocalDate.now()}.csv") }) {
             Text(Tone.Settings.EXPORT_CSV)
         }

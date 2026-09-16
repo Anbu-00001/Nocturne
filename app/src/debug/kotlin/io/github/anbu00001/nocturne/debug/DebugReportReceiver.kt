@@ -8,6 +8,8 @@ import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.core.focus.TimerKind
 import io.github.anbu00001.nocturne.core.reflect.GapCard
 import io.github.anbu00001.nocturne.core.reflect.PhoneDownGap
+import io.github.anbu00001.nocturne.export.FullExport
+import java.io.File
 import kotlinx.coroutines.launch
 import java.time.Instant
 import java.time.LocalDate
@@ -29,6 +31,8 @@ import java.time.ZoneId
  *   ... --es focus list                              recorded blocks with their ids
  *   ... --es focus delete --el id 3                  remove a test block from the history
  *   ... --es gaps preview                            the card the rules would show now (no prompt recorded) and the weekly list
+ *   ... --es export all                              Settings' "Export all data" into files/exports, then
+ *       adb exec-out run-as io.github.anbu00001.nocturne cat files/exports/<name printed> > export.zip
  */
 class DebugReportReceiver : BroadcastReceiver() {
 
@@ -38,6 +42,7 @@ class DebugReportReceiver : BroadcastReceiver() {
             intent.getStringExtra("focus") in setOf("list", "delete") -> async(app) { focusBlocks(app, intent) }
             intent.hasExtra("focus") -> reply(runCatching { focus(app, intent) })
             intent.hasExtra("gaps") -> async(app) { gaps(app) }
+            intent.hasExtra("export") -> async(app) { export(app) }
             else -> reply(runCatching { sleep(app, intent) })
         }
     }
@@ -82,6 +87,16 @@ class DebugReportReceiver : BroadcastReceiver() {
             "state" -> "running ${focus.running.value}, exact alarms ${focus.exactAlarms}"
             else -> error("--es focus start|stop|state, not $command")
         }
+    }
+
+    private suspend fun export(app: NocturneApp): String {
+        val dir = File(app.filesDir, "exports").apply { mkdirs() }
+        val file = File(dir, FullExport.fileName())
+        val started = System.currentTimeMillis()
+        val summary = file.outputStream().use { FullExport.write(app, it) }
+        val took = System.currentTimeMillis() - started
+        return "files/exports/${file.name}: ${file.length()} bytes, ${summary.total} rows in ${summary.rows.size} tables, $took ms\n" +
+            summary.rows.entries.joinToString("\n") { (table, rows) -> "  $table $rows" }
     }
 
     private suspend fun gaps(app: NocturneApp): String {

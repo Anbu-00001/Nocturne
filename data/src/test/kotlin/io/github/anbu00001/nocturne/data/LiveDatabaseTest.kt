@@ -119,6 +119,10 @@ class LiveDatabaseTest {
                     }
                     appendLine("model runs: ${room.metrics().latestRun()}")
                     appendLine("shift sentinel: ${Sentinels(room, sleepConfig).assess()}")
+                    // Settings' "Export all data" on the real history; build/live-export.zip holds personal data, move it out.
+                    val started = System.currentTimeMillis()
+                    val export = File("build/live-export.zip").outputStream().use { DataExport.writeZip(room, it, listOf("source" to "LiveDatabaseTest")) }
+                    appendLine("export: ${export.total} rows in ${export.rows.size} tables, ${File("build/live-export.zip").length()} bytes, ${System.currentTimeMillis() - started} ms")
                     appendLine()
                     appendPhases(room, nights)
                     appendLine()

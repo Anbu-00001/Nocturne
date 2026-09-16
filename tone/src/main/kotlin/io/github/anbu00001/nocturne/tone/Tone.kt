@@ -391,6 +391,13 @@ object Tone {
         const val DATA = "Data"
         const val EXPORT_CSV = "Export raw events as CSV"
         fun exported(rows: Long) = "Exported $rows rows."
+        const val EXPORT_ALL = "Export all data"
+        const val EXPORT_ALL_NOTE =
+            "One zip file with every table as a CSV: events, sessions, nights, light, charging, sleep times you entered, " +
+                "gap labels (whether a note exists, not its text), focus blocks, laptop use, and this phone's model, " +
+                "Android version and permissions. It stays on this phone until you share it."
+        fun exportedAll(rows: Long, tables: Int) = "Exported $rows rows in $tables tables."
+        fun exportFailed(reason: String) = "The export did not finish: $reason"
         const val WIPE = "Delete all data"
         const val WIPE_TITLE = "Delete all data?"
         const val WIPE_BODY =
