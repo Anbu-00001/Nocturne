@@ -7,7 +7,7 @@ changes. What it shows is tonight.py's, which has no GTK in it and is tested on 
 
   python3 tools/activitywatch/nocturne_indicator.py [--interval 60] [--no-label]
 
-The moon is dim before the evening window with the window's start beside it, bright with a star inside the window, and
+The moon is dim before the evening window ("evening at 01:04" beside it in the last 3 hours), bright with a star inside it, and
 faded with an amber dot when presence is not being recorded. It never notifies or pops up: the menu opens on a click.
 """
 
@@ -18,15 +18,30 @@ import signal
 import subprocess
 import sys
 import threading
+from datetime import date
 from pathlib import Path
 
 import gi
 
-gi.require_version("Gtk", "3.0")
-gi.require_version("AyatanaAppIndicator3", "0.1")
-from gi.repository import AyatanaAppIndicator3 as AppIndicator  # noqa: E402
-from gi.repository import GLib, Gtk  # noqa: E402
+try:
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("AyatanaAppIndicator3", "0.1")
+    from gi.repository import AyatanaAppIndicator3 as AppIndicator
+    from gi.repository import GLib, Gtk
+except (ValueError, ImportError) as e:
+    # Ubuntu 24.04 ships these; later releases move to libayatana-appindicator-glib. Say so and stop cleanly, so systemd's
+    # Restart=on-failure does not restart it every 10 s.
+    print(f"nocturne_indicator: AyatanaAppIndicator3 with GTK 3 is not available ({e}). "
+          "On Ubuntu 24.04: sudo apt install gir1.2-ayatanaappindicator3-0.1", file=sys.stderr)
+    sys.exit(0)
+try:
+    gi.require_version("Dbusmenu", "0.4")
+    from gi.repository import Dbusmenu  # noqa: F401  (loads the type the menu server hands out)
+    MENU_EVENTS = True
+except (ValueError, ImportError):
+    MENU_EVENTS = False
 
+import engagement  # noqa: E402
 from awclient import SERVER, ActivityWatch, event_interval, now_ms  # noqa: E402
 from laptop_state import afk_bucket, display_bucket, host_name  # noqa: E402
 from tonight import STOPPED_AFTER_MS, LaptopNow, PhoneSummary, View, view  # noqa: E402
@@ -81,6 +96,10 @@ class Indicator:
         menu.append(quit_item)
         menu.show_all()
         self.indicator.set_menu(menu)
+        if MENU_EVENTS:
+            # The shell sends "opened" on the menu's root each time it opens: the one signal that counts every opening.
+            root = self.indicator.get_property("dbus-menu-server").get_property("root-node")
+            root.connect("event", self._menu_event)
 
         self.refresh()
         GLib.timeout_add_seconds(interval_s, self._tick)
@@ -89,10 +108,16 @@ class Indicator:
         self.refresh()
         return True
 
+    def _menu_event(self, _item, name: str, _data, _timestamp) -> bool:
+        if name == "opened":
+            engagement.record(date.today(), opened=True)
+        return False
+
     def refresh(self) -> None:
         """Reads off the main loop, so a slow server never freezes the menu."""
         def work():
             shown = view(now_ms(), PhoneSummary.load(), read_laptop(self.aw, self.host), self.show_label)
+            engagement.record(date.today(), opened=False)
             GLib.idle_add(self.apply, shown)
 
         threading.Thread(target=work, daemon=True).start()
@@ -117,7 +142,7 @@ class Indicator:
         def work():
             try:
                 result = subprocess.run(
-                    [sys.executable, str(HERE / "nocturne_aw.py"), "--server", self.aw.base.removesuffix("/api/0"), "sync", "--if-connected"],
+                    [sys.executable, str(HERE / "nocturne_aw.py"), "--server", self.aw.base.removesuffix("/api/0"), "sync", "--if-connected", "--wifi"],
                     capture_output=True, text=True, timeout=300,
                 )
                 out = (result.stdout.strip().splitlines() or [""])[0]

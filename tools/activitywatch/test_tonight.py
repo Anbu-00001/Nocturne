@@ -49,11 +49,17 @@ class Windows(unittest.TestCase):
 
 
 class Views(unittest.TestCase):
+    def test_the_label_names_the_evening_window_only_in_the_hours_before_it(self):
+        laptop = LaptopNow(afk=[afk(ist("2026-09-16T18:00"), ist("2026-09-16T18:35"))], backlight=None, night_light=None)
+        self.assertEqual("", view(ist("2026-09-16T18:35"), PHONE, laptop).label)
+        self.assertEqual("", view(ist("2026-09-16T21:33"), PHONE, LaptopNow(afk=[afk(ist("2026-09-16T21:30"), ist("2026-09-16T21:33"))], backlight=None, night_light=None)).label)
+        self.assertEqual("evening at 00:34", view(ist("2026-09-16T21:34"), PHONE, LaptopNow(afk=[afk(ist("2026-09-16T21:30"), ist("2026-09-16T21:34"))], backlight=None, night_light=None)).label)
+
     def test_before_the_window_the_label_is_its_start_and_the_menu_says_the_rest(self):
         now = ist("2026-09-16T23:30")
         laptop = LaptopNow(afk=[afk(ist("2026-09-16T11:00"), ist("2026-09-16T21:00"), "afk"), afk(ist("2026-09-16T21:00"), now)], backlight=0.059, night_light=False)
         phone = PhoneSummary(**{**PHONE.__dict__, "synced_at": ist("2026-09-16T20:30")})
-        self.assertEqual(View("day", "00:34", [
+        self.assertEqual(View("day", "evening at 00:34", [
             "Evening window 00:34 to 12:30 (personal)",
             "At the laptop since noon: 2h 30m",
             "Laptop screen: backlight 6%, Night Light off",
@@ -90,6 +96,26 @@ class Views(unittest.TestCase):
                 self.assertNotIn("!", line)
                 self.assertFalse(any(re.search(rf"\b{re.escape(w)}", line, re.IGNORECASE) for w in banned), line)
                 self.assertTrue(all(ord(ch) < 0x2000 for ch in line), line)
+
+
+class Staleness(unittest.TestCase):
+    def test_a_window_from_last_week_and_an_old_night_say_so(self):
+        # Synced Thu 17 Sept; now Mon 21 Sept 18:30, after the phone fixed this week's window.
+        old = PhoneSummary(**{**PHONE.__dict__, "synced_at": ist("2026-09-17T00:55")})
+        v = view(ist("2026-09-21T18:30"), old, LaptopNow(afk=[afk(ist("2026-09-21T12:00"), ist("2026-09-21T18:30"))], backlight=None, night_light=None))
+        self.assertIn("Evening window 00:34 to 12:30 (personal, from last week's sync)", v.lines)
+        self.assertIn("Night of Tue 15 Sep, the latest synced: asleep 04:16 to 14:23 (estimate)", v.lines)
+        self.assertIn("Phone synced 4 days ago", v.lines)
+        # The same sync, read the day after: this week's window, yesterday's night.
+        fresh = view(ist("2026-09-17T12:00"), old, LaptopNow(afk=[afk(ist("2026-09-17T11:58"), ist("2026-09-17T12:00"))], backlight=None, night_light=None))
+        self.assertIn("Evening window 00:34 to 12:30 (personal)", fresh.lines)
+        self.assertIn("Night of Tue 15 Sep: asleep 04:16 to 14:23 (estimate)", fresh.lines)
+
+    def test_weeks_start_on_local_monday(self):
+        from tonight import week_start
+        self.assertEqual(ist("2026-09-21T00:00"), week_start(ist("2026-09-21T18:30"), 330))
+        self.assertEqual(ist("2026-09-14T00:00"), week_start(ist("2026-09-20T23:59"), 330))
+        self.assertEqual(ist("2026-09-21T00:00"), week_start(ist("2026-09-21T00:00"), 330))
 
 
 class Summary(unittest.TestCase):

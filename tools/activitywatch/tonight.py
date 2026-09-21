@@ -23,6 +23,9 @@ MINUTE_MS = 60_000
 DAY_MS = 86_400_000
 # Presence heartbeats come every 5 s and display readings every minute; this long without either means the watcher stopped.
 STOPPED_AFTER_MS = 5 * MINUTE_MS
+# The label says when the evening window starts only in the hours before it; at any other time a bare time beside the
+# system clock reads as a wrong clock (seen on the laptop, 21 Sept), and it would be one more thing always on screen.
+LABEL_LEAD_MS = 3 * 60 * MINUTE_MS
 
 
 def state_dir() -> Path:
@@ -136,7 +139,17 @@ def ago(ms: int) -> str:
         return "just now"
     if minutes < 120:
         return f"{minutes} min ago"
-    return f"{minutes // 60} h ago"
+    if minutes < 48 * 60:
+        return f"{minutes // 60} h ago"
+    return f"{minutes // 1440} days ago"
+
+
+def week_start(ts: int, offset_minutes: int) -> int:
+    """Local Monday 00:00 of the week holding [ts]: the phone fixes each week's evening window then."""
+    local = ts + offset_minutes * MINUTE_MS
+    day = local // DAY_MS
+    monday = day - (day + 3) % 7  # 1 Jan 1970 was a Thursday
+    return monday * DAY_MS - offset_minutes * MINUTE_MS
 
 
 def in_window(now: int, offset_minutes: int, start: int, end: int) -> bool:
@@ -188,9 +201,11 @@ def view(now: int, phone: PhoneSummary | None, laptop: LaptopNow, show_label: bo
     elif stopped:
         lines.append(f"Not recording presence since {clock(last_afk_end, offset)}" if last_afk_end else "Not recording presence today")
 
-    if window:
-        kind = "personal" if phone and phone.window_personal else "provisional"
-        lines.append(f"Evening window {minute_text(window[0])} to {minute_text(window[1])} ({kind})")
+    if window and phone:
+        kind = "personal" if phone.window_personal else "provisional"
+        # A window synced in an earlier week may have moved when this week began.
+        moved = ", from last week's sync" if phone.synced_at < week_start(now, offset) else ""
+        lines.append(f"Evening window {minute_text(window[0])} to {minute_text(window[1])} ({kind}{moved})")
 
     if laptop.afk is not None:
         noon = (now + offset * MINUTE_MS - 12 * 60 * MINUTE_MS) // DAY_MS * DAY_MS + 12 * 60 * MINUTE_MS - offset * MINUTE_MS
@@ -215,6 +230,10 @@ def view(now: int, phone: PhoneSummary | None, laptop: LaptopNow, show_label: bo
 
     if phone and phone.last_night_date:
         night = datetime.fromisoformat(phone.last_night_date).strftime("%a %d %b")
+        # A night older than yesterday's is still worth showing, as long as it says it is the latest one synced.
+        today = datetime.fromtimestamp((now + offset * MINUTE_MS) / 1000, tz=timezone.utc).date()
+        if (today - datetime.fromisoformat(phone.last_night_date).date()).days > 2:
+            night = f"{night}, the latest synced"
         if phone.last_no_sleep:
             lines.append(f"Night of {night}: no sleep")
         elif phone.last_onset and phone.last_wake:
@@ -226,4 +245,9 @@ def view(now: int, phone: PhoneSummary | None, laptop: LaptopNow, show_label: bo
         return View("stopped", "not recording" if show_label else "", lines)
     if window and in_window(now, offset, *window):
         return View("evening", "", lines)
-    return View("day", minute_text(window[0]) if show_label and window else "", lines)
+    label = ""
+    if show_label and window:
+        start_of_next = window_occurrence(now, offset, *window)[0] + DAY_MS
+        if start_of_next - now <= LABEL_LEAD_MS:
+            label = f"evening at {minute_text(window[0])}"
+    return View("day", label, lines)

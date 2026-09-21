@@ -5,4 +5,4 @@ After=aw-server.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 %h/26_class/Nocturne/tools/activitywatch/nocturne_aw.py sync --if-connected
+ExecStart=/usr/bin/python3 %h/26_class/Nocturne/tools/activitywatch/nocturne_aw.py sync --if-connected --wifi

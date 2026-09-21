@@ -10,15 +10,17 @@ night filter, and moves data between the laptop and the phone over adb:
   send          laptop-file, straight into the phone over adb, then wait for the import's result
   phone-to-aw   read the phone's sessions and nights over adb into ActivityWatch buckets, replacing what they held
   sync          send, then phone-to-aw; with --if-connected, quietly nothing when no phone is on adb
-  status        whether the server, both buckets and the phone are recording and in reach
+  status        whether the server, both buckets, the top-bar menu and the phone are recording, used and in reach
+  wifi-setup    over USB, once per phone boot: let `sync --wifi` reach the phone over Wi-Fi (adb on port 5555)
 
-The phone side is Nocturne's LaptopBridgeProvider; `content write/read/query` on it need adb's shell. Nothing here opens a
-network port or sends anything beyond localhost and USB.
+The phone side is Nocturne's LaptopBridgeProvider; `content write/read/query` on it need adb's shell. Nothing here sends
+anything beyond localhost, USB and, only after wifi-setup, adb on the home network.
 """
 
 from __future__ import annotations
 
 import argparse
+from datetime import date
 import csv
 import io
 import json
@@ -31,7 +33,8 @@ from pathlib import Path
 
 from awclient import SERVER, ActivityWatch, event_interval, iso, now_ms, parse_ts
 from laptop_state import afk_bucket, display_bucket, host_name, panel_size_mm, watch
-from tonight import PhoneSummary
+from engagement import summary as engagement_summary
+from tonight import PhoneSummary, state_dir
 
 HEADER = "nocturne-laptop,1"
 AUTHORITY = "io.github.anbu00001.nocturne.laptop"
@@ -130,6 +133,54 @@ def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Sp
 
 
 # ---------------------------------------------------------------------------------------------------------- the phone
+
+def adb_host(*args: str, serial: str | None = None, timeout: float = 30) -> str:
+    """An adb command run on the laptop side (connect, tcpip), not in the phone's shell."""
+    command = ["adb", *(["-s", serial] if serial else []), *args]
+    result = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+    if result.returncode != 0:
+        raise RuntimeError(f"{' '.join(command)} failed: {result.stderr.strip()}")
+    return result.stdout
+
+
+def wlan_address(ip_output: str) -> str | None:
+    """The phone's Wi-Fi IPv4 address from `ip -f inet addr show wlan0`."""
+    m = re.search(r"inet (\d+\.\d+\.\d+\.\d+)/", ip_output)
+    return m.group(1) if m else None
+
+
+def wifi_file() -> Path:
+    return state_dir() / "phone-wifi.json"
+
+
+def wifi_setup(serial: str | None) -> str:
+    """
+    Over USB, once per phone boot: adb over TCP on port 5555 (Android 15 and earlier; Android 17's ADB Wi-Fi 2.0 reconnects
+    paired phones by itself). Only laptops the phone has already authorised can connect, but the port is open to the whole
+    network, so use it on a home network you trust; `adb usb` or a reboot closes it.
+    """
+    address = wlan_address(adb("ip", "-f", "inet", "addr", "show", "wlan0", serial=serial))
+    if address is None:
+        raise RuntimeError("the phone has no Wi-Fi address; connect it to Wi-Fi first")
+    adb_host("tcpip", "5555", serial=serial)
+    target = f"{address}:5555"
+    wifi_file().parent.mkdir(parents=True, exist_ok=True)
+    wifi_file().write_text(json.dumps({"address": target}))
+    return target
+
+
+def wifi_connect() -> str | None:
+    """The remembered address as an adb serial when the phone answers there, else None."""
+    try:
+        target = json.loads(wifi_file().read_text())["address"]
+    except (OSError, ValueError, KeyError):
+        return None
+    try:
+        adb_host("connect", target, timeout=15)
+    except (RuntimeError, subprocess.SubprocessError):
+        return None
+    return target if phone_connected(target) else None
+
 
 def phone_connected(serial: str | None) -> bool:
     try:
@@ -257,6 +308,9 @@ def status(aw: ActivityWatch, host: str, serial: str | None) -> list[str]:
         else:
             _, end = event_interval(last)
             lines.append(f"{bucket}: last {json.dumps(last['data'], sort_keys=True)} until {age(end)}")
+    ran, opened_days, opens = engagement_summary(date.today())
+    if ran:
+        lines.append(f"indicator: ran on {ran} of the last 14 days, menu opened {opens} times on {opened_days} of them")
     if not phone_connected(serial):
         lines.append("phone: not connected over adb")
     else:
@@ -288,6 +342,20 @@ def build_laptop_file(aw: ActivityWatch, args) -> str:
     return laptop_file(display, cover_from, to, spans_from_events(afk, shown, reach_ms=args.reach_s * 1000))
 
 
+def sync_now(aw: ActivityWatch, args) -> None:
+    """send, and for sync also phone-to-aw, over the transport already chosen in args.serial."""
+    text = build_laptop_file(aw, args)
+    spans = text.count("\nspan,")
+    result = send(text, args.serial)
+    print(f"sent {spans} spans: {result['outcome']}, {result['added']} new or changed, {result['removed']} gone, "
+          f"{result['nights']} nights re-derived" + (f", error: {result['error']}" if result["error"] else ""))
+    if result["outcome"] != "ok":
+        raise SystemExit(1)
+    if args.command == "sync":
+        for bucket, count in phone_to_aw(aw, args.serial).items():
+            print(f"{bucket}: {count} events")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--server", default=SERVER, help="ActivityWatch server (default %(default)s)")
@@ -312,9 +380,11 @@ def main(argv: list[str] | None = None) -> None:
             p.add_argument("--out", help="file to write (default: stdout)")
         else:
             p.add_argument("--if-connected", action="store_true", help="exit quietly when no phone is on adb (for a timer)")
+            p.add_argument("--wifi", action="store_true", help="with no phone on USB, try the address wifi-setup remembered")
 
     sub.add_parser("phone-to-aw")
     sub.add_parser("status")
+    sub.add_parser("wifi-setup", help="over USB: let sync reach the phone over Wi-Fi until it reboots (see wifi_setup)")
     args = parser.parse_args(argv)
     aw = ActivityWatch(args.server)
 
@@ -327,18 +397,20 @@ def main(argv: list[str] | None = None) -> None:
         else:
             sys.stdout.write(text)
     elif args.command in ("send", "sync"):
+        over_wifi = None
+        if args.wifi and not phone_connected(args.serial):
+            over_wifi = wifi_connect()
+            args.serial = over_wifi or args.serial
         if args.if_connected and not phone_connected(args.serial):
             return
-        text = build_laptop_file(aw, args)
-        spans = text.count("\nspan,")
-        result = send(text, args.serial)
-        print(f"sent {spans} spans: {result['outcome']}, {result['added']} new or changed, {result['removed']} gone, "
-              f"{result['nights']} nights re-derived" + (f", error: {result['error']}" if result["error"] else ""))
-        if result["outcome"] != "ok":
-            raise SystemExit(1)
-        if args.command == "sync":
-            for bucket, count in phone_to_aw(aw, args.serial).items():
-                print(f"{bucket}: {count} events")
+        try:
+            sync_now(aw, args)
+        finally:
+            if over_wifi:
+                # A Wi-Fi transport left connected beside USB later makes every serial-less adb command ambiguous.
+                subprocess.run(["adb", "disconnect", over_wifi], capture_output=True, timeout=15)
+    elif args.command == "wifi-setup":
+        print(f"sync --wifi will reach the phone at {wifi_setup(args.serial)} until it reboots")
     elif args.command == "phone-to-aw":
         for bucket, count in phone_to_aw(aw, args.serial).items():
             print(f"{bucket}: {count} events")
