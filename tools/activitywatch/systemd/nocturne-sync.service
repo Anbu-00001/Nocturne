@@ -1,4 +1,5 @@
-# Laptop use to the phone and the phone's sessions and nights to ActivityWatch, when the phone is on adb (Phase 4).
+# Laptop use to the phone and the phone's sessions and nights to ActivityWatch, when the phone is on adb (Phase 4). With Wi-Fi
+# sync paired (Phase 5, nocturne-serve.service) the phone does this itself and this timer is only for a phone on USB.
 [Unit]
 Description=Nocturne laptop and phone sync
 After=aw-server.service

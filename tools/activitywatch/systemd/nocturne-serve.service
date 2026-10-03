@@ -1,0 +1,16 @@
+# The laptop's end of Wi-Fi sync (Phase 5): answers the paired phone while the laptop is on. The phone starts every exchange,
+# about every 15 minutes on Wi-Fi, so this only listens; the laptop is off for most of the night and that is fine. Pair once
+# first, over USB: python3 nocturne_aw.py pair. Edit the path if the repository moves.
+[Unit]
+Description=Nocturne Wi-Fi sync server
+PartOf=graphical-session.target
+After=graphical-session.target aw-server.service
+Wants=aw-server.service
+
+[Service]
+ExecStart=/usr/bin/python3 -u %h/26_class/Nocturne/tools/activitywatch/nocturne_aw.py serve
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=graphical-session.target

@@ -89,9 +89,9 @@ class LiveDatabaseTest {
                 buildString {
                     val versionAfter = room.openHelper.readableDatabase.version
                     appendLine("schema $versionBefore -> $versionAfter, raw events $rawBefore before and ${room.rawEvents().count()} after, sessions $sessions")
-                    // Without laptop use the new model should give the stored nights back; only the run differs.
+                    // On what the phone already holds (laptop spans included) the new model should give the stored nights back; only the run differs.
                     val stored = storedNights.associateBy { it.dateOfNight }
-                    val moved = beforeLaptop.filter { n -> stored[n.dateOfNight]?.copy(modelRunId = 0, lightLaptopMinutes = 0) != n.copy(modelRunId = 0) }
+                    val moved = beforeLaptop.filter { n -> stored[n.dateOfNight]?.copy(modelRunId = 0) != n.copy(modelRunId = 0) }
                     appendLine("recomputed nights differing from the stored ones: ${moved.size} of ${beforeLaptop.size}")
                     moved.forEach { appendLine("  was ${stored[it.dateOfNight]}\n  now $it") }
                     laptopResult?.let { r ->

@@ -15,10 +15,14 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.VIBRATE" />
 
-    <!-- No network in Phases 1-3 (spec §8): stripped even if a library asks for it. -->
-    <uses-permission
-        android:name="android.permission.INTERNET"
-        tools:node="remove" />
+    <!-- Phase 5 (spec §8 allowed the network from Phase 4 on; Phases 1-3 had none): Wi-Fi sync with the paired laptop. Every
+         connection is made by core-model's SyncClient, to private addresses only, pinned to the laptop's certificate; no other
+         code in the app opens a socket (core-model's NetworkSurfaceTest). To go back to no network, restore
+         android:name="android.permission.INTERNET" tools:node="remove" here: sync then fails with a permission error and
+         nothing else changes. If targetSdk ever reaches 37, Android 17 also needs ACCESS_LOCAL_NETWORK, a runtime permission, for this.
+         ACCESS_NETWORK_STATE is how the app sees that it is on Wi-Fi; WorkManager's network constraint needs it too. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- App names for "mostly Instagram" without QUERY_ALL_PACKAGES. -->
     <queries>
@@ -50,7 +54,9 @@
             android:name=".focus.FocusAlarmReceiver"
             android:exported="false" />
 
-        <!-- Phase 4: laptop use in, sessions and nights out, over adb's `content` command. DUMP is held by adb's shell and
+        <!-- Phase 4: laptop use in, sessions and nights out, over adb's `content` command (Phase 5 adds `pair`, which gives the
+             phone the laptop's address, certificate fingerprint and secret; that too needs adb's DUMP, so nothing on the phone
+             can pair it with another computer). DUMP is held by adb's shell and
              cannot be granted to ordinary apps, so no app on the phone can read the history through this. -->
         <provider
             android:name=".laptop.LaptopBridgeProvider"

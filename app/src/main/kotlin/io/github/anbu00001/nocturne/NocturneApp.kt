@@ -11,6 +11,10 @@ import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
 import io.github.anbu00001.nocturne.core.metrics.METRICS_VERSION
 import io.github.anbu00001.nocturne.core.sleep.SLEEP_MODEL_VERSION
 import io.github.anbu00001.nocturne.focus.FocusController
+import io.github.anbu00001.nocturne.sync.LanSync
+import io.github.anbu00001.nocturne.sync.LanSyncScheduler
+import io.github.anbu00001.nocturne.sync.PairLog
+import io.github.anbu00001.nocturne.sync.SyncStore
 import io.github.anbu00001.nocturne.data.DerivedTables
 import io.github.anbu00001.nocturne.data.NocturneDatabase
 import io.github.anbu00001.nocturne.data.Reflections
@@ -34,6 +38,11 @@ class NocturneApp : Application(), CollectorHost {
     val reflections by lazy { Reflections(database) }
     val focus by lazy { FocusController(this) }
 
+    /** Phase 5: the paired laptop and the latest Wi-Fi exchange with it. */
+    val syncStore by lazy { SyncStore(this) }
+    val lanSync by lazy { LanSync(this, syncStore) }
+    val pairLog by lazy { PairLog(this) }
+
     override val harvester: Harvester by lazy {
         Harvester(
             db = database,
@@ -48,6 +57,7 @@ class NocturneApp : Application(), CollectorHost {
     override fun onCreate() {
         super.onCreate()
         HarvestScheduler.ensureScheduled(this)
+        if (syncStore.pairing != null) LanSyncScheduler.ensureScheduled(this)
         rescoreIfModelChanged()
         focus.resume()
     }

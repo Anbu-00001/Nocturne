@@ -50,7 +50,7 @@ graph TD
 
     subgraph Ubuntu Laptop
         AW_SERVER["ActivityWatch Server"] -->|aw-client| AW_PYTHON["nocturne_aw.py Daemon"]
-        AW_PYTHON -->|ADB Content Provider sync| ROOM_DB
+        AW_PYTHON -->|"Wi-Fi exchange (phone starts it) or ADB"| ROOM_DB
         ROOM_DB -->|Export Sessions & Sleep| AW_PYTHON
         AW_PYTHON -->|Write BUCKETS| AW_SERVER
     end
@@ -72,7 +72,7 @@ sequenceDiagram
 
     OS->>Coll: Emit raw events & ambient lux readings
     Coll->>DB: Insert into raw_events_v5 & light_samples
-    AW->>DB: Sync laptop spans via ADB Content Provider
+    AW->>DB: Laptop spans via the phone's Wi-Fi exchange (or ADB)
     DB->>Class: Fetch raw events & light samples for window
     Class->>Class: Classify unlocks, glances, and app sessions
     Class->>Model: Run sleep inference (Bayesian priors + BOCPD)
@@ -161,20 +161,26 @@ flowchart LR
 
 The `tools/activitywatch` subsystem connects Nocturne with `aw-server-rust`:
 
-- **Laptop -> Phone**: Reads active display spans and AFK status from ActivityWatch, writing them to Nocturne's Room database via `adb shell content write`. Laptop light minutes directly feed sleep inference and light dose models.
-- **Phone -> Laptop**: Reads classified phone sessions and inferred sleep intervals from Nocturne via `adb shell content read` and pushes them as custom buckets (`nocturne-sessions_<device>`, `nocturne-sleep_<device>`) into ActivityWatch.
+- **Laptop -> Phone**: Reads active display spans and AFK status from ActivityWatch and imports them into Nocturne's Room database. Laptop light minutes directly feed sleep inference and light dose models.
+- **Phone -> Laptop**: Sends classified phone sessions and inferred sleep intervals, which the laptop pushes as custom buckets (`nocturne-sessions_<device>`, `nocturne-sleep_<device>`) into ActivityWatch.
+
+Two ways to move the data, which produce the same imports:
+
+- **Wi-Fi (Phase 5, the normal way).** The phone starts every exchange, about every 15 minutes on Wi-Fi: it posts its sessions and nights to the laptop's `nocturne_aw.py serve` and takes the laptop's use in the reply, over TLS with the laptop's certificate pinned, requests signed with a secret from a one-time `pair` over USB, and private addresses only. The laptop answers only while it is on (it powers off most nights); a missed attempt is the ordinary case. The phone opens no port. This needs the `INTERNET` permission, the only network use in the app (a test fails if any other code opens a socket).
+- **adb (Phase 4).** `nocturne_aw.py sync` over USB, for a phone that is not paired.
 
 ```mermaid
 sequenceDiagram
-    participant Laptop as Ubuntu (nocturne_aw.py)
-    participant AW as aw-server-rust
     participant Phone as Nocturne (Android App)
+    participant Laptop as Ubuntu (nocturne_aw.py serve)
+    participant AW as aw-server-rust
 
-    Laptop->>AW: Query AFK & window buckets
-    Laptop->>Phone: ADB content write -> laptop_spans
-    Phone->>Phone: Recompute sleep & light with laptop spans
-    Laptop->>Phone: ADB content read -> sessions & sleep
+    Laptop->>AW: Watcher records presence and backlight
+    Phone->>Laptop: POST sessions & nights (TLS, pinned certificate, HMAC)
     Laptop->>AW: Post nocturne-sessions & nocturne-sleep buckets
+    Laptop->>AW: Query AFK & display buckets
+    Laptop-->>Phone: Laptop use (nocturne-laptop,1)
+    Phone->>Phone: Import spans, recompute the nights they move
 ```
 
 ---
@@ -215,8 +221,12 @@ Connect Android device via USB with ADB enabled and run:
 ./gradlew :app:installDebug
 ```
 
-### ActivityWatch Daemon (Linux)
-Install Python dependencies and run the sync daemon:
+### ActivityWatch and Wi-Fi sync (Linux)
+Standard library only (plus `openssl` once, for the laptop's certificate). The units in `tools/activitywatch/systemd` run the server, the watcher, the sync server and the top-bar indicator at login; `docs/PHASES.md` ("Phase 5") has the commands. With the phone on USB, once:
+```bash
+python3 tools/activitywatch/nocturne_aw.py pair      # then `status` shows the last exchange
+```
+Over adb instead, without pairing:
 ```bash
 python3 tools/activitywatch/nocturne_aw.py sync
 ```

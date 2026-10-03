@@ -2,7 +2,7 @@
 """Nocturne and ActivityWatch on the laptop (spec §9 Phase 4). Standard library only.
 
 ActivityWatch records when someone is at the laptop. This tool adds what it does not record, the screen's backlight and
-night filter, and moves data between the laptop and the phone over adb:
+night filter, and moves data between the laptop and the phone, over adb or (Phase 5) over the home Wi-Fi:
 
   watch         record backlight and Night Light into nocturne-display_<host> every minute; with --afk, presence too
                 (laptop_state.py says when that is needed)
@@ -12,9 +12,13 @@ night filter, and moves data between the laptop and the phone over adb:
   sync          send, then phone-to-aw; with --if-connected, quietly nothing when no phone is on adb
   status        whether the server, both buckets, the top-bar menu and the phone are recording, used and in reach
   wifi-setup    over USB, once per phone boot: let `sync --wifi` reach the phone over Wi-Fi (adb on port 5555)
+  serve         the laptop's end of Wi-Fi sync: answer the phone's exchanges while the laptop is on (lansync.py)
+  pair          over USB, once: give the phone this laptop's address, certificate fingerprint and secret
 
-The phone side is Nocturne's LaptopBridgeProvider; `content write/read/query` on it need adb's shell. Nothing here sends
-anything beyond localhost, USB and, only after wifi-setup, adb on the home network.
+The phone side is Nocturne's LaptopBridgeProvider; `content write/read/query` on it need adb's shell. `serve` is how the
+phone reaches the laptop without adb: the phone starts each exchange, so it opens no port. Nothing here sends anything
+beyond localhost, USB and, only after wifi-setup, adb on the home network; `serve` answers only the paired phone, on
+private addresses.
 """
 
 from __future__ import annotations
@@ -25,12 +29,14 @@ import csv
 import io
 import json
 import re
+import socket
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
+import lansync
 from awclient import SERVER, ActivityWatch, event_interval, iso, now_ms, parse_ts
 from laptop_state import afk_bucket, display_bucket, host_name, panel_size_mm, watch
 from engagement import summary as engagement_summary
@@ -266,15 +272,19 @@ def sleep_events(csv_text: str) -> list[dict]:
     return events
 
 
-def phone_to_aw(aw: ActivityWatch, serial: str | None) -> dict:
-    """Derived rows change with every recompute, so each bucket is rebuilt whole from the phone's full history."""
-    device = re.sub(r"[^A-Za-z0-9._-]", "-", adb("getprop", "ro.product.model", serial=serial).strip()) or "phone"
-    sessions = adb("content", "read", "--uri", f"content://{AUTHORITY}/sessions?from=0", serial=serial)
-    nights = adb("content", "read", "--uri", f"content://{AUTHORITY}/nights?from=2000-01-01", serial=serial)
-    # What the top-bar indicator shows between syncs: the evening window and the latest night.
+def device_name(model: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "-", model.strip()) or "phone"
+
+
+def save_summary(device: str, nights: str) -> None:
+    """What the top-bar indicator shows between syncs: the evening window and the latest night."""
     summary = PhoneSummary.from_nights(rows(nights), synced_at=now_ms(), device=device)
     if summary:
         summary.keeping_window_of(PhoneSummary.load()).save()
+
+
+def rebuild_buckets(aw: ActivityWatch, device: str, sessions: str, nights: str) -> dict:
+    """Derived rows change with every recompute, so each bucket is rebuilt whole from the phone's full history."""
     counts = {}
     for bucket, kind, events in (
         (f"nocturne-sessions_{device}", "nocturne.session", session_events(sessions)),
@@ -285,6 +295,135 @@ def phone_to_aw(aw: ActivityWatch, serial: str | None) -> dict:
         aw.insert(bucket, events)
         counts[bucket] = len(events)
     return counts
+
+
+def phone_rows_to_aw(aw: ActivityWatch, device: str, sessions: str, nights: str) -> dict:
+    save_summary(device, nights)
+    return rebuild_buckets(aw, device, sessions, nights)
+
+
+def phone_to_aw(aw: ActivityWatch, serial: str | None) -> dict:
+    device = device_name(adb("getprop", "ro.product.model", serial=serial))
+    sessions = adb("content", "read", "--uri", f"content://{AUTHORITY}/sessions?from=0", serial=serial)
+    nights = adb("content", "read", "--uri", f"content://{AUTHORITY}/nights?from=2000-01-01", serial=serial)
+    return phone_rows_to_aw(aw, device, sessions, nights)
+
+
+# ---------------------------------------------------------------------------------------------------------- Wi-Fi sync
+
+def laptop_address() -> str | None:
+    """The address this laptop reaches its router by, as a hint for the phone (which also tries the names). Sends nothing."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("192.0.2.1", 9))
+            return probe.getsockname()[0]
+    except OSError:
+        return None
+
+
+def pairing_text(identity: lansync.Identity, host: str, address: str | None, port: int) -> str:
+    """What the phone's `content write .../pair` takes: where to look for this laptop, and what to trust there."""
+    lines = ["nocturne-pair,1", f"name,{host}", f"host,{host}.local", f"host,{host}"]
+    if address:
+        lines.append(f"address,{address}")
+    lines += [f"port,{port}", f"cert,{identity.fingerprint}", f"secret,{identity.secret}"]
+    return "\n".join(lines) + "\n"
+
+
+def parse_row(out: str, last: str) -> dict[str, str | None]:
+    """`content query` prints `Row: 0 a=1, b=2, ..., <last>=...`; the last field, which may hold commas, is NULL when empty."""
+    out = out.strip()
+    if not out.startswith("Row:"):
+        raise RuntimeError(f"no answer from the phone: {out!r}")
+    head, _, tail = out.split(" ", 2)[2].partition(f", {last}=")
+    row: dict[str, str | None] = {}
+    for field in head.split(", "):
+        key, _, value = field.partition("=")
+        row[key] = value
+    row[last] = None if tail == "NULL" else tail
+    return row
+
+
+def pair_row(serial: str | None) -> dict[str, str | None]:
+    return parse_row(adb("content", "query", "--uri", f"content://{AUTHORITY}/pair", serial=serial), last="error")
+
+
+def pair(args, wait_s: float = 45) -> list[str]:
+    identity = lansync.load_identity()
+    host = host_name()
+    if not HOST_RE.fullmatch(host):
+        raise SystemExit(f"host name {host!r} does not fit the pairing format")
+    text = pairing_text(identity, host, laptop_address(), args.port)
+    before = pair_row(args.serial)
+    adb("content", "write", "--uri", f"content://{AUTHORITY}/pair", stdin=text.encode(), serial=args.serial)
+    deadline = time.monotonic() + wait_s
+    row = before
+    while time.monotonic() < deadline:
+        row = pair_row(args.serial)
+        if int(row["pairSequence"] or 0) > int(before["pairSequence"] or 0) and row["pairOutcome"] != "running":
+            break
+        time.sleep(0.5)
+    if row["pairOutcome"] != "ok":
+        raise SystemExit(f"the phone did not take the pairing ({row['pairOutcome']}): {row['error']}")
+    lines = [
+        f"paired with {row['name']}: the phone will look for it at {row['hosts']} (last seen at {row['address']}), port {row['port']}",
+        f"certificate {identity.fingerprint[:16]}..., secret kept in {lansync.sync_dir()}",
+    ]
+    # The phone tries once at once; say how that went, since it is the first proof the whole path works.
+    paired_at = int(before["lastAttemptAt"] or 0)
+    while time.monotonic() < deadline:
+        row = pair_row(args.serial)
+        if int(row["lastAttemptAt"] or 0) > paired_at and row["lastResult"] != "none":
+            break
+        time.sleep(1)
+    result = row["lastResult"]
+    if result == "ok":
+        lines.append("first exchange: ok")
+    else:
+        lines.append(f"first exchange: {result}" + (f" ({row['error']})" if row["error"] else "")
+                     + ("; start the laptop's end with `nocturne_aw.py serve` (or enable nocturne-serve.service) and the phone retries about every 15 min on Wi-Fi"
+                        if result in ("unreachable", "none") else ""))
+    return lines
+
+
+def on_exchange_for(aw: ActivityWatch, args, log=None):
+    """The server's callback: the phone's rows into ActivityWatch and phone.json, and the laptop's use back."""
+    log = log or (lambda line: print(line, file=sys.stderr, flush=True))
+
+    def on_exchange(request: lansync.Request, address: str) -> str:
+        save_summary(request.device, request.nights)
+        previous = lansync.last_exchange()
+        buckets = [f"nocturne-sessions_{request.device}", f"nocturne-sleep_{request.device}"]
+        unchanged = (previous is not None and previous.get("digest") == request.digest and previous.get("device") == request.device
+                     and all(b in aw.buckets() for b in buckets))
+        if not unchanged:
+            rebuild_buckets(aw, request.device, request.sessions, request.nights)
+        text = build_laptop_file(aw, args)
+        spans = text.count("\nspan,")
+        lansync.record_exchange(address, request, spans)
+        log(f"exchange with {address} ({request.device}): {request.sessions.count(chr(10)) - 1} sessions, "
+            f"{request.nights.count(chr(10)) - 1} nights ({'unchanged' if unchanged else 'rebuilt'}); {spans} laptop spans sent")
+        return text
+
+    return on_exchange
+
+
+def serve(aw: ActivityWatch, args) -> None:
+    identity = lansync.load_identity()
+    try:
+        server = lansync.make_server(identity, on_exchange_for(aw, args), bind=args.bind, port=args.port)
+    except OSError as e:
+        raise SystemExit(f"cannot listen on {args.bind}:{args.port}: {e}")
+    print(f"serving Nocturne sync on {args.bind}:{args.port}, certificate {identity.fingerprint[:16]}...", file=sys.stderr, flush=True)
+    server.serve_forever()
+
+
+def listening(port: int) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=1):
+            return True
+    except OSError:
+        return False
 
 
 # ----------------------------------------------------------------------------------------------------------- commands
@@ -311,6 +450,15 @@ def status(aw: ActivityWatch, host: str, serial: str | None) -> list[str]:
     ran, opened_days, opens = engagement_summary(date.today())
     if ran:
         lines.append(f"indicator: ran on {ran} of the last 14 days, menu opened {opens} times on {opened_days} of them")
+    last = lansync.last_exchange()
+    if last:
+        lines.append(f"wifi sync: last exchange {age(last['at'])} with {last['device']} at {last['address']}: {last['sessions']} sessions and "
+                     f"{last['nights']} nights in, {last['spans']} laptop spans out")
+    elif lansync.find_identity() is None:
+        lines.append("wifi sync: not set up (run `pair` with the phone on USB)")
+    else:
+        lines.append("wifi sync: set up, no exchange yet")
+    lines.append(f"wifi sync server: {'listening on port ' + str(lansync.PORT) if listening(lansync.PORT) else 'not running'}")
     if not phone_connected(serial):
         lines.append("phone: not connected over adb")
     else:
@@ -367,7 +515,7 @@ def main(argv: list[str] | None = None) -> None:
     watcher.add_argument("--afk", action="store_true", help="also record presence; only where no ActivityWatch AFK watcher runs")
     watcher.add_argument("--timeout", type=int, default=180, help="seconds without input before afk (default %(default)s)")
 
-    for name in ("laptop-file", "send", "sync"):
+    for name in ("laptop-file", "send", "sync", "serve"):
         p = sub.add_parser(name)
         p.add_argument("--days", type=int, default=7, help="laptop use starting in the last N days (default %(default)s)")
         p.add_argument("--host", help="ActivityWatch host name (default: this machine's)")
@@ -378,10 +526,15 @@ def main(argv: list[str] | None = None) -> None:
         p.add_argument("--reach-s", type=int, default=90, help="how long a display reading holds after its last heartbeat")
         if name == "laptop-file":
             p.add_argument("--out", help="file to write (default: stdout)")
+        elif name == "serve":
+            p.add_argument("--bind", default="0.0.0.0", help="address to listen on (default %(default)s)")
+            p.add_argument("--port", type=int, default=lansync.PORT, help="port (default %(default)s)")
         else:
             p.add_argument("--if-connected", action="store_true", help="exit quietly when no phone is on adb (for a timer)")
             p.add_argument("--wifi", action="store_true", help="with no phone on USB, try the address wifi-setup remembered")
 
+    pairing = sub.add_parser("pair", help="over USB, once: give the phone this laptop's address, certificate and secret")
+    pairing.add_argument("--port", type=int, default=lansync.PORT, help="the port `serve` listens on (default %(default)s)")
     sub.add_parser("phone-to-aw")
     sub.add_parser("status")
     sub.add_parser("wifi-setup", help="over USB: let sync reach the phone over Wi-Fi until it reboots (see wifi_setup)")
@@ -411,6 +564,10 @@ def main(argv: list[str] | None = None) -> None:
                 subprocess.run(["adb", "disconnect", over_wifi], capture_output=True, timeout=15)
     elif args.command == "wifi-setup":
         print(f"sync --wifi will reach the phone at {wifi_setup(args.serial)} until it reboots")
+    elif args.command == "serve":
+        serve(aw, args)
+    elif args.command == "pair":
+        print("\n".join(pair(args)))
     elif args.command == "phone-to-aw":
         for bucket, count in phone_to_aw(aw, args.serial).items():
             print(f"{bucket}: {count} events")

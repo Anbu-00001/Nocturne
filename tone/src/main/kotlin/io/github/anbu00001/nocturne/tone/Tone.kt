@@ -346,6 +346,29 @@ object Tone {
             "Time at a laptop counts as awake for sleep estimates, and its screen adds to the modelled evening light. " +
                 "What the screen shows is not recorded, so the light range covers dark and light pages."
         fun eveningMinutes(minutes: Int) = "$minutes of those minutes at a laptop, its screen included"
+
+        /** Phase 5: the phone and the laptop exchange over the home Wi-Fi, started by the phone. */
+        const val SYNC_TITLE = "Wi-Fi sync"
+        const val SYNC_NOT_PAIRED =
+            "No laptop is paired. On the laptop, with the phone on USB: python3 tools/activitywatch/nocturne_aw.py pair"
+        fun syncPaired(name: String) =
+            "Paired with $name. About every 15 minutes on Wi-Fi the phone sends its sessions and nights to it and takes the laptop's use in reply."
+        const val SYNC_NOTE =
+            "Only the paired laptop is contacted: its certificate is pinned, each request is signed with a secret from pairing, " +
+                "and addresses outside a home or office network are refused. The laptop answers only while it is on."
+        const val SYNC_NEVER = "No exchange yet."
+        fun syncOk(at: String, spans: Int, nights: Int) = "Last exchange $at: $spans laptop periods received, $nights nights re-derived"
+        fun syncTried(at: String, result: String) = "Last try $at: $result"
+        const val SYNC_UNREACHABLE = "the laptop did not answer (it is off, or on another network)"
+        const val SYNC_OFF_WIFI = "the phone is not on Wi-Fi"
+        const val SYNC_WRONG_CERT = "something else answered at the laptop's address; pair the laptop once more over USB"
+        const val SYNC_REJECTED = "the laptop did not accept the secret; pair the laptop once more over USB"
+        const val SYNC_CLOCK = "the phone's and the laptop's clocks differ by more than five minutes"
+        const val SYNC_NO_AW = "the laptop is on but ActivityWatch is not running there"
+        fun syncFailed(detail: String) = "the exchange broke off: $detail"
+        const val SYNC_NOW = "Sync now"
+        const val SYNC_RUNNING = "Syncing"
+        const val SYNC_FORGET = "Forget this laptop"
     }
 
     object Settings {

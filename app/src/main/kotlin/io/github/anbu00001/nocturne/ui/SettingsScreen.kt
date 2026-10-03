@@ -8,6 +8,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -48,7 +49,10 @@ import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.HarvestOutcome
 import io.github.anbu00001.nocturne.data.HarvestRunEntity
+import io.github.anbu00001.nocturne.core.sync.SyncResult
 import io.github.anbu00001.nocturne.data.LaptopHostEntity
+import io.github.anbu00001.nocturne.sync.LanSyncScheduler
+import io.github.anbu00001.nocturne.sync.SyncState
 import io.github.anbu00001.nocturne.data.LightSampleEntity
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.PackageCount
@@ -112,6 +116,17 @@ class SettingsViewModel(private val app: NocturneApp) : ViewModel() {
 
     val laptops: StateFlow<List<LaptopHostEntity>> = app.database.laptop().observeHosts()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val sync: StateFlow<SyncState> = app.syncStore.state
+
+    fun syncNow() {
+        app.appScope.launch { app.lanSync.run(requireWifi = true) }
+    }
+
+    fun forgetLaptop() {
+        app.syncStore.forget()
+        LanSyncScheduler.cancel(app)
+    }
 
     val light: StateFlow<LightSettings> = combine(
         app.database.light().observeLatest(),
@@ -186,6 +201,7 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
     val light by vm.light.collectAsStateWithLifecycle()
     val diagnostics by vm.diagnostics.collectAsStateWithLifecycle()
     val laptops by vm.laptops.collectAsStateWithLifecycle()
+    val sync by vm.sync.collectAsStateWithLifecycle()
     val message by vm.message.collectAsStateWithLifecycle()
     var confirmWipe by remember { mutableStateOf(false) }
     val screenTimeoutMs = remember { app.deviceProfile.sleepConfig().screenOffTimeoutMs }
@@ -337,6 +353,7 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
             }
             Text(Tone.Laptop.NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
         }
+        SyncBlock(sync, muted, onSyncNow = vm::syncNow, onForget = vm::forgetLaptop)
 
         HorizontalDivider()
         SectionTitle(Tone.Settings.CLASSIFIER)
@@ -393,6 +410,41 @@ private fun SectionTitle(text: String) {
 private fun grantedText(granted: Boolean) = if (granted) Tone.Settings.GRANTED else Tone.Settings.MISSING
 
 private val runFormat = DateTimeFormatter.ofPattern("d MMM HH:mm")
+
+/** Phase 5: the paired laptop and what the latest Wi-Fi exchange with it came to. */
+@Composable
+private fun SyncBlock(sync: SyncState, muted: androidx.compose.ui.graphics.Color, onSyncNow: () -> Unit, onForget: () -> Unit) {
+    val pairing = sync.pairing
+    Text(Tone.Laptop.SYNC_TITLE, style = MaterialTheme.typography.titleSmall)
+    if (pairing == null) {
+        Text(Tone.Laptop.SYNC_NOT_PAIRED, color = muted)
+        return
+    }
+    Text(Tone.Laptop.syncPaired(pairing.name))
+    val ok = sync.lastOkAt
+    val tried = sync.lastAttemptAt
+    if (ok == null && tried == null) {
+        Text(Tone.Laptop.SYNC_NEVER, color = muted)
+    } else {
+        ok?.let { Text(Tone.Laptop.syncOk(dateTime(it), sync.spans, sync.nights), color = muted) }
+        if (tried != null && sync.result != SyncResult.OK) Text(Tone.Laptop.syncTried(dateTime(tried), syncResultText(sync)), color = muted)
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Button(onClick = onSyncNow, enabled = !sync.running) { Text(if (sync.running) Tone.Laptop.SYNC_RUNNING else Tone.Laptop.SYNC_NOW) }
+        OutlinedButton(onClick = onForget) { Text(Tone.Laptop.SYNC_FORGET) }
+    }
+    Text(Tone.Laptop.SYNC_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
+}
+
+private fun syncResultText(sync: SyncState): String = when (sync.result) {
+    SyncResult.UNREACHABLE -> Tone.Laptop.SYNC_UNREACHABLE
+    SyncResult.OFF_WIFI -> Tone.Laptop.SYNC_OFF_WIFI
+    SyncResult.WRONG_CERTIFICATE -> Tone.Laptop.SYNC_WRONG_CERT
+    SyncResult.REJECTED -> Tone.Laptop.SYNC_REJECTED
+    SyncResult.CLOCK -> Tone.Laptop.SYNC_CLOCK
+    SyncResult.NO_ACTIVITYWATCH -> Tone.Laptop.SYNC_NO_AW
+    else -> Tone.Laptop.syncFailed(sync.detail ?: sync.result)
+}
 
 private fun dateTime(ts: Long): String = Instant.ofEpochMilli(ts).atZone(ZoneId.systemDefault()).format(runFormat)
 

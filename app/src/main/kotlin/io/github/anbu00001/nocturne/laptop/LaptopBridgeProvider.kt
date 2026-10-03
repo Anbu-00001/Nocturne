@@ -10,9 +10,12 @@ import android.os.ParcelFileDescriptor
 import android.util.Log
 import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.core.laptop.LaptopFileFormat
+import io.github.anbu00001.nocturne.core.sync.PairingFormat
 import io.github.anbu00001.nocturne.core.time.LocalClock
 import io.github.anbu00001.nocturne.data.LaptopExport
 import io.github.anbu00001.nocturne.data.LaptopImport
+import io.github.anbu00001.nocturne.sync.LanSyncScheduler
+import io.github.anbu00001.nocturne.sync.PairLog
 import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
@@ -27,7 +30,10 @@ import java.time.LocalDate
  *   [LaptopFileFormat] and re-derives the nights it moves;
  * - `adb shell content query --uri content://io.github.anbu00001.nocturne.laptop/import` says how the last import went;
  * - `adb shell content read --uri 'content://io.github.anbu00001.nocturne.laptop/sessions?from=<epoch ms>'` and
- *   `.../nights?from=<yyyy-mm-dd>` stream derived rows for ActivityWatch.
+ *   `.../nights?from=<yyyy-mm-dd>` stream derived rows for ActivityWatch;
+ * - `adb shell content write --uri content://io.github.anbu00001.nocturne.laptop/pair < pairing.txt` pairs the phone with a
+ *   laptop for Wi-Fi sync (Phase 5): where to find it, the SHA-256 of its certificate and the secret that signs requests
+ *   (PairingFormat); `content query .../pair` says how that went and how the latest Wi-Fi exchange did.
  *
  * Reading and writing both need android.permission.DUMP, which adb's shell holds and ordinary apps cannot, so nothing else
  * on the phone reads the history through this. The import runs after the write returns; the laptop polls the query.
@@ -39,9 +45,26 @@ class LaptopBridgeProvider : ContentProvider() {
     override fun getType(uri: Uri): String = "text/csv"
 
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor? {
-        if (uri.pathSegments.singleOrNull() != IMPORT) return null
-        val status = ImportStatus.read(checkNotNull(context))
-        return MatrixCursor(ImportStatus.COLUMNS).apply { addRow(status.row()) }
+        val app = checkNotNull(context).applicationContext as NocturneApp
+        return when (uri.pathSegments.singleOrNull()) {
+            IMPORT -> MatrixCursor(ImportStatus.COLUMNS).apply { addRow(ImportStatus.read(app).row()) }
+            PAIR -> {
+                val pair = app.pairLog.read()
+                val sync = app.syncStore.state.value
+                val paired = sync.pairing
+                MatrixCursor(PAIR_COLUMNS).apply {
+                    // The error that matters: why the pairing was refused, else why the latest exchange did not work.
+                    addRow(
+                        arrayOf<Any?>(
+                            pair.sequence, pair.outcome, paired?.name.orEmpty(), paired?.hosts?.joinToString(" ").orEmpty(),
+                            paired?.address.orEmpty(), paired?.port ?: 0, sync.lastAttemptAt ?: 0, sync.lastOkAt ?: 0, sync.result,
+                            if (pair.outcome == PairLog.FAILED) pair.error else sync.detail,
+                        ),
+                    )
+                }
+            }
+            else -> null
+        }
     }
 
     override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor {
@@ -53,6 +76,12 @@ class LaptopBridgeProvider : ContentProvider() {
                 val (source, sink) = ParcelFileDescriptor.createReliablePipe()
                 val sequence = ImportStatus.begin(app)
                 app.appScope.launch { import(app, source, sequence) }
+                sink
+            }
+            path == PAIR && writing -> {
+                val (source, sink) = ParcelFileDescriptor.createReliablePipe()
+                val sequence = app.pairLog.begin()
+                app.appScope.launch { pair(app, source, sequence) }
                 sink
             }
             path == SESSIONS && !writing -> {
@@ -95,6 +124,21 @@ class LaptopBridgeProvider : ContentProvider() {
         status.save(app)
     }
 
+    /** Reads the pairing, keeps it, starts the schedule and tries the laptop once, so `pair` can report a first exchange. */
+    private suspend fun pair(app: NocturneApp, source: ParcelFileDescriptor, sequence: Long) {
+        try {
+            val text = ParcelFileDescriptor.AutoCloseInputStream(source).use { it.readCapped(MAX_PAIR_BYTES) }.toString(Charsets.UTF_8)
+            app.syncStore.pair(PairingFormat.parse(text))
+            LanSyncScheduler.ensureScheduled(app)
+            app.pairLog.finish(sequence, null)
+        } catch (e: Exception) {
+            Log.w(TAG, "pairing failed", e)
+            app.pairLog.finish(sequence, e.message ?: e.javaClass.simpleName)
+            return
+        }
+        app.lanSync.run(requireWifi = true)
+    }
+
     override fun insert(uri: Uri, values: ContentValues?): Uri? = throw UnsupportedOperationException()
 
     override fun update(uri: Uri, values: ContentValues?, selection: String?, selectionArgs: Array<out String>?): Int = throw UnsupportedOperationException()
@@ -106,7 +150,13 @@ class LaptopBridgeProvider : ContentProvider() {
         const val IMPORT = "import"
         const val SESSIONS = "sessions"
         const val NIGHTS = "nights"
+        const val PAIR = "pair"
         const val DEFAULT_DAYS = 14L
+
+        /** A pairing is under a kilobyte. */
+        const val MAX_PAIR_BYTES = 8 * 1024
+
+        val PAIR_COLUMNS = arrayOf("pairSequence", "pairOutcome", "name", "hosts", "address", "port", "lastAttemptAt", "lastOkAt", "lastResult", "error")
 
         /** Years of laptop use come to well under a megabyte. */
         const val MAX_BYTES = 8 * 1024 * 1024

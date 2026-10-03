@@ -85,7 +85,7 @@ class Indicator:
             menu.append(item)
             self.lines.append(item)
         menu.append(Gtk.SeparatorMenuItem())
-        self.sync_item = Gtk.MenuItem(label="Sync with the phone now")
+        self.sync_item = Gtk.MenuItem(label="Sync with the phone now (USB)")
         self.sync_item.connect("activate", lambda _: self.sync())
         menu.append(self.sync_item)
         open_aw = Gtk.MenuItem(label="Open ActivityWatch")
@@ -147,7 +147,7 @@ class Indicator:
                 )
                 out = (result.stdout.strip().splitlines() or [""])[0]
                 note = ("Sync: " + out) if result.returncode == 0 and out else \
-                    "No phone on adb; nothing synced" if result.returncode == 0 else "Sync did not finish"
+                    "No phone on adb; a paired phone syncs by itself on Wi-Fi" if result.returncode == 0 else "Sync did not finish"
             except (OSError, subprocess.SubprocessError):
                 note = "Sync did not finish"
             GLib.idle_add(self._synced, note)
