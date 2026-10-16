@@ -49,8 +49,24 @@ class LaptopFile(unittest.TestCase):
             event(ist("2026-09-14T23:10"), ist("2026-09-15T00:40"), backlight=0.06, nightLight=True),
         ]
         spans = aw.spans_from_events(afk, shown, reach_ms=90_000)
-        text = aw.laptop_file(self.display, ist("2026-09-14T18:00"), ist("2026-09-15T06:00"), spans)
+        gaps = [(ist("2026-09-14T18:30"), ist("2026-09-14T19:15"))]
+        text = aw.laptop_file(self.display, ist("2026-09-14T18:00"), ist("2026-09-15T06:00"), spans, gaps)
         self.assertEqual(sample, text)
+
+    def test_gaps_are_written_inside_the_coverage_only(self):
+        spans = []
+        text = aw.laptop_file(self.display, 1000, 9000, spans, gaps=[(500, 2000), (2000, 3000), (8000, 9000), (8500, 9500)])
+        self.assertEqual(["gap,workbook,2000,3000", "gap,workbook,8000,9000"], [l for l in text.splitlines() if l.startswith("gap,")])
+
+    def test_gaps_come_from_awake_time_the_watcher_left_unrecorded(self):
+        afk = [event(ist("2026-10-16T09:00"), ist("2026-10-16T10:00"), status="afk")]
+        with mock.patch.object(aw.power_log, "read_awake", return_value=[(ist("2026-10-16T08:55"), ist("2026-10-16T12:00"))]) as read:
+            gaps = aw.gaps_from(afk, ist("2026-10-16T08:00"), ist("2026-10-16T12:00"))
+        read.assert_called_once_with(ist("2026-10-16T08:00"), ist("2026-10-16T12:00"))
+        self.assertEqual([(ist("2026-10-16T10:00"), ist("2026-10-16T12:00"))], gaps)
+        # The five minutes of the boot before the watcher started are too short to be a gap.
+        with mock.patch.object(aw.power_log, "read_awake", return_value=None):
+            self.assertEqual([], aw.gaps_from(afk, 0, 10))
 
     def test_overlapping_activity_joins_and_display_gaps_are_unknown(self):
         afk = [

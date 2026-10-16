@@ -52,6 +52,7 @@ object DataExport {
         Table("model_runs"),
         Table("laptop_spans"),
         Table("laptop_hosts"),
+        Table("laptop_gaps"),
     )
 
     /** Tables deliberately not exported; DataExportTest fails when a new table is in neither list. */

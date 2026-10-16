@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import lansync
+import power_log
 from awclient import SERVER, ActivityWatch, event_interval, iso, now_ms, parse_ts
 from laptop_state import afk_bucket, display_bucket, host_name, panel_size_mm, watch
 from engagement import summary as engagement_summary
@@ -116,8 +117,11 @@ def spans_from_events(afk: list[dict], display: list[dict], reach_ms: int) -> li
     return spans
 
 
-def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Span]) -> str:
-    """The format core-model's LaptopFileFormat reads; spans starting outside the coverage are left to other files."""
+def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Span], gaps: list[tuple[int, int]] = ()) -> str:
+    """
+    The format core-model's LaptopFileFormat reads; spans starting outside the coverage are left to other files. A gap is time
+    the laptop was on and nothing recorded its use, inside the coverage, so the phone does not count it as idle.
+    """
     if not HOST_RE.fullmatch(display.host):
         raise ValueError(f"host {display.host!r} does not fit the file format")
 
@@ -135,6 +139,9 @@ def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Sp
         backlight = "" if s.backlight is None else number(s.backlight)
         night = "" if s.night_light is None else ("1" if s.night_light else "0")
         lines.append(f"span,{display.host},{s.start},{s.end},{backlight},{night}")
+    for start, end in gaps:
+        if cover_from <= start < end <= cover_to:
+            lines.append(f"gap,{display.host},{start},{end}")
     return "\n".join(lines) + "\n"
 
 
@@ -473,6 +480,17 @@ def status(aw: ActivityWatch, host: str, serial: str | None) -> list[str]:
     return lines
 
 
+def gaps_from(afk: list[dict], cover_from: int, cover_to: int) -> list[tuple[int, int]]:
+    """
+    Stretches the laptop was on and awake with no activity event of either kind (afk or not) to show the watcher ran. Empty
+    where the journal cannot say when the laptop was on: absence of a gap is then no claim.
+    """
+    awake = power_log.read_awake(cover_from, cover_to)
+    if awake is None:
+        return []
+    return power_log.unrecorded(awake, [event_interval(e) for e in afk], cover_from, cover_to)
+
+
 def build_laptop_file(aw: ActivityWatch, args) -> str:
     """
     The server cuts events at a query's edges, so events are read from a day before the coverage: a stretch that began
@@ -487,7 +505,7 @@ def build_laptop_file(aw: ActivityWatch, args) -> str:
     cover_from = to - args.days * DAY_MS
     afk = aw.events(afk_bucket(host), cover_from - DAY_MS, to)
     shown = aw.events(display_bucket(host), cover_from - 2 * DAY_MS, to)
-    return laptop_file(display, cover_from, to, spans_from_events(afk, shown, reach_ms=args.reach_s * 1000))
+    return laptop_file(display, cover_from, to, spans_from_events(afk, shown, reach_ms=args.reach_s * 1000), gaps_from(afk, cover_from, to))
 
 
 def sync_now(aw: ActivityWatch, args) -> None:
@@ -517,7 +535,7 @@ def main(argv: list[str] | None = None) -> None:
 
     for name in ("laptop-file", "send", "sync", "serve"):
         p = sub.add_parser(name)
-        p.add_argument("--days", type=int, default=7, help="laptop use starting in the last N days (default %(default)s)")
+        p.add_argument("--days", type=int, default=21, help="laptop use starting in the last N days (default %(default)s)")
         p.add_argument("--host", help="ActivityWatch host name (default: this machine's)")
         p.add_argument("--peak-nits", type=float, default=250.0, help="panel luminance at full backlight (default %(default)s)")
         p.add_argument("--min-nits", type=float, default=2.0, help="panel luminance at the lowest backlight (default %(default)s)")

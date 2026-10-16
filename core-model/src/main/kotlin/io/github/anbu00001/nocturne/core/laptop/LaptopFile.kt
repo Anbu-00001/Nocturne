@@ -35,7 +35,23 @@ data class LaptopCoverage(val host: String, val fromTs: Long, val toTs: Long) {
     fun covers(span: LaptopSpan) = span.host == host && span.startTs >= fromTs && span.startTs < toTs
 }
 
-data class LaptopFile(val displays: List<LaptopDisplay>, val coverage: List<LaptopCoverage>, val spans: List<LaptopSpan>)
+/**
+ * The computer was on from [fromTs] to [toTs] and nothing was recording its use, so the absence of spans there says nothing:
+ * the user may have been at it. Inside the file's coverage, like a span. A night whose evening overlaps one is told so
+ * instead of being modelled as if the laptop had been idle.
+ */
+data class LaptopGap(val host: String, val fromTs: Long, val toTs: Long) {
+    init {
+        require(toTs > fromTs) { "empty gap for $host" }
+    }
+}
+
+data class LaptopFile(
+    val displays: List<LaptopDisplay>,
+    val coverage: List<LaptopCoverage>,
+    val spans: List<LaptopSpan>,
+    val gaps: List<LaptopGap> = emptyList(),
+)
 
 /**
  * What the laptop sends the phone: plain lines, written by `tools/activitywatch/nocturne_aw.py` and read here, so the
@@ -46,9 +62,11 @@ data class LaptopFile(val displays: List<LaptopDisplay>, val coverage: List<Lapt
  * display,<host>,<width mm>,<height mm>,<min nits>,<peak nits>
  * coverage,<host>,<from ms>,<to ms>
  * span,<host>,<start ms>,<end ms>,<backlight 0..1 or empty>,<1, 0 or empty>
+ * gap,<host>,<from ms>,<to ms>
  * ```
  * Times are UTC epoch milliseconds. Every covered host needs a display row, every span its host's coverage and a start
- * of its own; a file that breaks any rule is refused whole, never imported in part.
+ * of its own, every gap its host's coverage to lie within; a file that breaks any rule is refused whole, never imported
+ * in part. Gap rows are optional, and a laptop that cannot tell when it was on sends none.
  */
 object LaptopFileFormat {
     const val HEADER = "nocturne-laptop,1"
@@ -59,6 +77,7 @@ object LaptopFileFormat {
         val displays = ArrayList<LaptopDisplay>()
         val coverage = ArrayList<LaptopCoverage>()
         val spans = ArrayList<LaptopSpan>()
+        val gaps = ArrayList<LaptopGap>()
         var header = false
         lines.forEachIndexed { index, raw ->
             val line = raw.trimEnd('\r')
@@ -95,6 +114,10 @@ object LaptopFileFormat {
                         }
                         spans += LaptopSpan(host(), long(2), long(3), backlight, warm)
                     }
+                    "gap" -> {
+                        if (f.size != 4) fail("gap needs 4 fields")
+                        gaps += LaptopGap(host(), long(2), long(3))
+                    }
                     else -> fail("unknown row \"${f[0]}\"")
                 }
             } catch (e: IllegalArgumentException) {
@@ -113,6 +136,11 @@ object LaptopFileFormat {
             require(c.covers(s)) { "span at ${s.startTs} of ${s.host} is outside its coverage" }
         }
         require(spans.map { it.host to it.startTs }.toSet().size == spans.size) { "two spans of one host start at the same time" }
-        return LaptopFile(displays, coverage, spans)
+        for (g in gaps) {
+            val c = requireNotNull(covered[g.host]) { "no coverage for ${g.host}" }
+            require(g.fromTs >= c.fromTs && g.toTs <= c.toTs) { "gap at ${g.fromTs} of ${g.host} is outside its coverage" }
+        }
+        require(gaps.map { it.host to it.fromTs }.toSet().size == gaps.size) { "two gaps of one host start at the same time" }
+        return LaptopFile(displays, coverage, spans, gaps)
     }
 }

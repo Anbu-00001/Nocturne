@@ -171,6 +171,11 @@ sequenceDiagram
 - **Concurrency & Handshake Timeouts**: The server enforces a multi-threaded handshake pool (max 16 concurrent connections) with 10s handshake and 30s request timeouts to prevent slowloris starvation.
 - **Strict Network Boundary**: Nocturne declares `android.permission.INTERNET` exclusively for `core-model/sync`. The test suite runs `NetworkSurfaceTest`, which statically scans the codebase and fails the build if any other file opens a socket or introduces network dependencies.
 
+
+### 3. Starting it, and what the phone is told when nothing was recording
+- **One command on the laptop**: `tools/activitywatch/install-services.sh` enables ActivityWatch, the watcher, the sync server and the top-bar moon as systemd user units, so they start at every login. Without them nothing records laptop use and the phone reports "did not answer".
+- **Recording gaps (Phase 6a, schema 8)**: ActivityWatch cannot tell a laptop that was off from one that was on with the watcher not running. `power_log.py` reads boot and suspend times from the journal, and the laptop file carries `gap` rows for awake time nothing recorded. A modelled evening that overlaps one says so ("The laptop was on for N minutes of this evening with nothing recording it, so this figure may be low"), and the personal sensitivity fit will skip it.
+
 ---
 
 ## Desktop ActivityWatch Integration & Top-Bar Indicator

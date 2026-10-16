@@ -234,6 +234,19 @@ interface LaptopDao {
     @Query("SELECT * FROM laptop_spans ORDER BY startTs")
     suspend fun allSpans(): List<LaptopSpanEntity>
 
+    @Query("SELECT * FROM laptop_gaps WHERE host = :host AND fromTs >= :fromTs AND fromTs < :toTs ORDER BY fromTs")
+    suspend fun gapsStarting(host: String, fromTs: Long, toTs: Long): List<LaptopGapEntity>
+
+    @Query("DELETE FROM laptop_gaps WHERE host = :host AND fromTs >= :fromTs AND fromTs < :toTs")
+    suspend fun deleteGaps(host: String, fromTs: Long, toTs: Long): Int
+
+    @Insert
+    suspend fun insertGaps(gaps: List<LaptopGapEntity>)
+
+    /** Gaps sharing any time with [fromTs, toTs]. */
+    @Query("SELECT * FROM laptop_gaps WHERE fromTs < :toTs AND toTs > :fromTs ORDER BY fromTs")
+    suspend fun gapsOverlapping(fromTs: Long, toTs: Long): List<LaptopGapEntity>
+
     /** [overlapping] as it changes, for a night's timeline. */
     @Query(
         """SELECT * FROM laptop_spans

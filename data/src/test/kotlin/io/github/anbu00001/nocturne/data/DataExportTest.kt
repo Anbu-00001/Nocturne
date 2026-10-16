@@ -107,7 +107,7 @@ class DataExportTest {
         )
         assertEquals(2L, summary.rows["raw_events"])
         assertEquals(5_003L, summary.rows["light_samples"])
-        assertEquals(15, summary.rows.size)
+        assertEquals(16, summary.rows.size)
     }
 
     private fun unzip(bytes: ByteArray): Map<String, String> {

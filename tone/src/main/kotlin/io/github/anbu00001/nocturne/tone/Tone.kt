@@ -347,6 +347,10 @@ object Tone {
                 "What the screen shows is not recorded, so the light range covers dark and light pages."
         fun eveningMinutes(minutes: Int) = "$minutes of those minutes at a laptop, its screen included"
 
+        /** Phase 6: the laptop was on and nothing recorded its use, so its share of the evening is a floor. */
+        fun eveningGap(minutes: Int) =
+            "The laptop was on for $minutes minutes of this evening with nothing recording it, so this figure may be low."
+
         /** Phase 5: the phone and the laptop exchange over the home Wi-Fi, started by the phone. */
         const val SYNC_TITLE = "Wi-Fi sync"
         const val SYNC_NOT_PAIRED =

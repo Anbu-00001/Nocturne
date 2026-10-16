@@ -184,20 +184,24 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
         nightSessions: List<SessionEntity>,
         dataToTs: Long,
         panels: Map<String, DisplayProfile>,
-    ): EveningLightEstimate? {
+    ): NightLight? {
         val interval = EveningLight.interval(date, offsetMinutes, window, onsetTs, dataToTs) ?: return null
         val samples = db.light().overlapping(interval.startTs - SAMPLE_REACH_MS, interval.endTs + SAMPLE_REACH_MS)
         if (samples.none { it.timestamp < interval.endTs && it.timestamp + it.durationMs > interval.startTs }) return null
         val laptop = db.laptop().overlapping(interval.startTs, interval.endTs).mapNotNull { span ->
             panels[span.host]?.let { LaptopScreen(span.startTs, span.endTs, span.backlight, span.warmFilter, it) }
         }
-        return EveningLight.estimate(
+        val estimate = EveningLight.estimate(
             interval,
             nightSessions.map { ScreenSpan(it.startTs, it.endTs) },
             samples.map { LightReading(it.timestamp, it.durationMs, it.ambientLux?.toDouble(), it.brightnessSetting, it.darkUi, it.warmFilter) },
             display,
             laptop = laptop,
         )
+        // Time the laptop was on and nothing recorded it: its minutes above are then a floor, which the night says.
+        val gaps = db.laptop().gapsOverlapping(interval.startTs, interval.endTs).map { it.fromTs..it.toTs }
+        val gapMinutes = (LaptopActivity.unrecordedMs(gaps, interval.startTs, interval.endTs) / LocalClock.MINUTE_MS).toInt()
+        return NightLight(estimate, gapMinutes)
     }
 
     private companion object {
@@ -256,16 +260,23 @@ private fun NightEntity.withWindow(w: HabitualWindow) = copy(
     windowNights = w.nights,
 )
 
-private fun NightEntity.withLight(light: EveningLightEstimate?) = copy(
-    modelledSuppressionPct = light?.suppression?.percent?.mid?.toFloat(),
-    suppressionLowPct = light?.suppression?.percent?.low?.toFloat(),
-    suppressionHighPct = light?.suppression?.percent?.high?.toFloat(),
-    melanopicDoseLuxHours = light?.suppression?.melanopicDoseLuxHours?.mid?.toFloat(),
-    lightScreenMinutes = light?.screenMinutes ?: 0,
-    lightMeasuredMinutes = light?.measuredMinutes ?: 0,
-    lightLaptopMinutes = light?.laptopMinutes ?: 0,
-    suppressionDurationClamped = light?.suppression?.durationClamped ?: false,
-)
+/** A night's modelled evening light, and how much of that evening a laptop that was on went unrecorded. */
+private data class NightLight(val estimate: EveningLightEstimate, val gapMinutes: Int)
+
+private fun NightEntity.withLight(night: NightLight?): NightEntity {
+    val light = night?.estimate
+    return copy(
+        modelledSuppressionPct = light?.suppression?.percent?.mid?.toFloat(),
+        suppressionLowPct = light?.suppression?.percent?.low?.toFloat(),
+        suppressionHighPct = light?.suppression?.percent?.high?.toFloat(),
+        melanopicDoseLuxHours = light?.suppression?.melanopicDoseLuxHours?.mid?.toFloat(),
+        lightScreenMinutes = light?.screenMinutes ?: 0,
+        lightMeasuredMinutes = light?.measuredMinutes ?: 0,
+        lightLaptopMinutes = light?.laptopMinutes ?: 0,
+        lightLaptopGapMinutes = night?.gapMinutes ?: 0,
+        suppressionDurationClamped = light?.suppression?.durationClamped ?: false,
+    )
+}
 
 private fun NightEntity.hasWindow(w: HabitualWindow) =
     eveningWindowStartMinute == w.window.startMinute && eveningWindowEndMinute == w.window.endMinute &&

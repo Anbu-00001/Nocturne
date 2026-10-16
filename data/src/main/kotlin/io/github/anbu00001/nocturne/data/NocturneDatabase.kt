@@ -14,7 +14,8 @@ import androidx.room.migration.Migration
  * window_metrics and model_runs tables and nights.modelRunId. Additive changes are what Room's AutoMigration
  * handles. Schema 5 (analytics 2.7) rebuilds raw_events with interned names, by hand ([MIGRATION_4_5]). Schema 6
  * (Phase 3a) adds reflections.source and drops schema 4's raw_events copy ([MIGRATION_5_6]). Schema 7 (Phase 4) adds
- * laptop use and each night's laptop minutes ([MIGRATION_6_7]).
+ * laptop use and each night's laptop minutes ([MIGRATION_6_7]). Schema 8 (Phase 6) only adds laptop_gaps and each night's
+ * unrecorded laptop minutes, which AutoMigration handles.
  * MigrationTest builds each earlier schema from its JSON and opens it, and each migration is run against
  * a copy of the database pulled from the phone before installing.
  */
@@ -36,10 +37,11 @@ import androidx.room.migration.Migration
         ModelRunEntity::class,
         LaptopSpanEntity::class,
         LaptopHostEntity::class,
+        LaptopGapEntity::class,
     ],
-    version = 7,
+    version = 8,
     exportSchema = true,
-    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4)],
+    autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 3, to = 4), AutoMigration(from = 7, to = 8)],
 )
 abstract class NocturneDatabase : RoomDatabase() {
     abstract fun rawEvents(): RawEventDao

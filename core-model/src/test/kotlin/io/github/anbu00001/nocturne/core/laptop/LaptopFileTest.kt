@@ -26,6 +26,7 @@ class LaptopFileTest {
             ),
             file.spans,
         )
+        assertEquals(listOf(LaptopGap("workbook", ist("2026-09-14", "18:30"), ist("2026-09-14", "19:15"))), file.gaps)
         val profile = file.displays.single().profile()
         assertEquals(0.345 * 0.215, profile.screenAreaM2, 1e-12)
         assertEquals(2.0 + 248.0 * 0.06, profile.luminanceAtShare(0.06), 1e-9)
@@ -53,6 +54,27 @@ class LaptopFileTest {
         assertTrue("implausible panel" in assertFailsWith<IllegalArgumentException> { parse("display,workbook,345,215,300,250") }.message!!)
         assertTrue("two coverage rows" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, coverage) }.message!!)
         assertTrue("same time" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "span,workbook,1000,1500,,", "span,workbook,1000,1600,,") }.message!!)
+        assertTrue("gap needs 4" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,1000") }.message!!)
+        assertTrue("empty gap" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,1500,1500") }.message!!)
+        assertTrue("outside its coverage" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,1500,2500") }.message!!)
+        assertTrue("outside its coverage" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,500,1500") }.message!!)
+        assertTrue("no coverage" in assertFailsWith<IllegalArgumentException> { parse(display, "gap,workbook,1000,1500") }.message!!)
+        assertTrue("two gaps" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,1000,1500", "gap,workbook,1000,1600") }.message!!)
+    }
+
+    @Test
+    fun `a file without gap rows still parses, with no gaps`() {
+        val file = LaptopFileFormat.parse(sequenceOf(LaptopFileFormat.HEADER, "display,workbook,345,215,2.0,250.0", "coverage,workbook,1000,2000"))
+        assertEquals(emptyList(), file.gaps)
+    }
+
+    @Test
+    fun `time inside gaps counts once even where two computers' gaps overlap`() {
+        val gaps = listOf(1_000L..3_000L, 2_000L..5_000L, 8_000L..9_000L)
+        assertEquals(5_000L, LaptopActivity.unrecordedMs(gaps, 0, 10_000))
+        assertEquals(2_500L, LaptopActivity.unrecordedMs(gaps, 2_500, 5_000))
+        assertEquals(0L, LaptopActivity.unrecordedMs(gaps, 5_000, 8_000))
+        assertEquals(0L, LaptopActivity.unrecordedMs(emptyList(), 0, 10_000))
     }
 
     @Test

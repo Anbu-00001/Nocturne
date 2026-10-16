@@ -20,6 +20,7 @@ The spec's §9 phases, split into steps small enough to verify one at a time.
 | 3b | Hannay19 port + golden-file test against Python `circadian` | laptop, 📱 for a real week of light CSV | port and synthetic golden files done 2026-09-16; phase estimator on the phone's history in LiveDatabaseTest; real-week golden file and any display wait for a week of light (22 Sept) |
 | 3c | Personal sensitivity fit, n ≥ 30 nights | 📱 | falling-asleep times collected from 2026-09-15; needs 30 nights with light |
 | 4 | ActivityWatch on Ubuntu: laptop use into sleep inference and §6.1, phone sessions and nights into ActivityWatch | laptop + 📱 over adb | installed on the A18 2026-09-17 00:22 (schema 7, sleep model 4); first sync 00:55 ok; a night with laptop use still to see |
+| 5 / 6a | Wi-Fi sync started by the phone (3 Oct); laptop recording gaps, so an evening the laptop was on but nothing recorded it is not modelled as idle (schema 8), and `install-services.sh` so the laptop side starts after every boot | laptop + 📱 | Wi-Fi sync installed 2026-10-03; gaps installed on the A18 2026-10-16 09:28 (schema 8) |
 
 ## Building
 
@@ -245,13 +246,35 @@ The question was whether the phone and laptop can exchange data without adb. The
 - **Setting it up** (once; the laptop commands need no sudo):
 
 ```
-mkdir -p ~/.config/systemd/user && cp ~/26_class/Nocturne/tools/activitywatch/systemd/* ~/.config/systemd/user/
-systemctl --user daemon-reload && systemctl --user enable --now aw-server.service nocturne-watch.service nocturne-serve.service nocturne-indicator.service
+~/26_class/Nocturne/tools/activitywatch/install-services.sh   # copies the units, enables them, stops hand-started copies, checks both ports
 python3 ~/26_class/Nocturne/tools/activitywatch/nocturne_aw.py pair      # phone on USB, once; says how the first exchange went
 python3 ~/26_class/Nocturne/tools/activitywatch/nocturne_aw.py status
 ```
   `nocturne-sync.timer` (adb) is no longer needed once paired; leave it off. If ufw is ever enabled: `sudo ufw allow from 192.168.1.0/24 to any port 47650 proto tcp`.
 - **Limits.** The laptop answers only while it is on, so its use reaches the phone within about 15 minutes of a boot and the last stretch before a shutdown arrives with the next boot's exchange. A new laptop certificate (deleting `~/.local/state/nocturne/sync`) needs `pair` again, which the phone says in words (`rejected` or `wrong_certificate`). If the router isolates clients, the phone reports "did not answer" and nothing else; the old adb path still works.
+
+## Phase 6a: when the laptop was on and nothing recorded it (2026-10-16)
+
+You reported that screen time still did not reach the phone by itself. What was found, in the order it was checked:
+
+- **Nothing was running on the laptop.** None of the four units was enabled, so after every reboot (the laptop is up from about 05:00 to 20:00 and is rebooted daily) nothing recorded laptop use and nothing answered the phone. ActivityWatch holds no laptop event from 3 Oct 23:xx to 16 Oct: 13 days. The phone was not at fault: its last try (08:51 on 16 Oct, with the laptop still off) was on schedule and said `unreachable`, its remembered address (192.168.1.105) is still the laptop's, `anbunew.local` answers from the phone in 5 ms (avahi is on, so a changed address is found by name), its standby bucket is 5 (exempted) and it is on the battery allowlist. Starting the three services by hand at 09:00 was enough: the phone's own job exchanged within the hour, with no adb.
+- **The fix for that is one command,** `tools/activitywatch/install-services.sh`: copies the units, enables them, stops hand-started copies (they hold the same ports) and checks both ports. It has to be run by you once; I do not write autostart files.
+- **A second fault, found while looking at that gap.** The laptop file said it covered "the last 7 days", and a day in it with no spans meant "the laptop was not used". So the 13 empty days counted as 13 idle ones, and the three nights with a modelled suppression since (12, 13 and 15 Oct) were computed without any laptop light, silently low. The laptop cannot tell "off" from "on, nothing recording", but the journal can.
+- **What was built.**
+  - Laptop: `power_log.py` reads boot spans (`journalctl --list-boots`) and suspends (`systemd-sleep` lines), takes awake time minus every ActivityWatch afk or not-afk event, and keeps stretches of at least 10 minutes. `laptop_file` writes them as optional `gap,<host>,<from>,<to>` rows inside the coverage. Coverage is now the last 21 days (was 7) so a longer outage reaches the phone; spans are still replaced from ActivityWatch, which keeps the history.
+  - Phone: schema 8 (`laptop_gaps`, and `nights.lightLaptopGapMinutes`; additive, so Room migrates it by itself), `LaptopFile` parses the rows under the same rules as spans (inside coverage, no duplicate start), `LaptopImport` replaces a host's gaps in its coverage and re-derives the nights around any that changed, and a modelled evening says "The laptop was on for N minutes of this evening with nothing recording it, so this figure may be low."
+  - Tests: Python 58 (a shared sample file now has a gap row, read by both languages), Kotlin 258 across four modules, a schema 7 to 8 migration test, and an import test that sends a gap, sends it again (nothing changes), then drops it (the night follows).
+- **Checked on the real data before installing.** The laptop would send 32 gaps, about 107 hours of "on, awake, nothing recording" since 3 Oct (the journal holds boots back to September, and a suspended laptop is not a gap). Against a copy of the phone's database: schema 7 to 8, 100,687 raw events before and after, 0 of 42 recomputed nights differing from the stored ones, and the import changed exactly three nights, adding 14, 31 and 179 unrecorded minutes to 12, 13 and 15 Oct without changing any suppression figure. The install gate said VERIFY at 93% and PROCEED at 97% after those checks.
+- **Installed 09:28 on 16 Oct** with the phone idle on the launcher; the signing certificate matched the installed build. The first exchange afterwards came from a server process started before the gap code existed, so it carried no gaps; after restarting it, the phone's next own exchange (09:52, no adb) stored them.
+- **Checked on the phone, 16 Oct.** Schema 8 (`user_version` 8), 100,697 raw events (100,687 in the copy tested, the rest harvested since), 42 nights. After the 09:52 exchange `laptop_gaps` held 32 rows, 107.0 hours, exactly what the laptop computed beforehand, and the nights of 12, 13 and 15 Oct carried 14, 31 and 179 unrecorded minutes with their suppression figures unchanged (10.2, 16.1 and 31.0%). The pairing row read `lastResult=ok`.
+- **On the screen, 16 Oct 09:52** (phone idle, daytime): Tonight shows "The laptop was on for 179 minutes of this evening with nothing recording it, so this figure may be low." under the 31% figure, and Settings shows the Wi-Fi sync block as designed: "Paired with anbunew", "Last exchange 16 Oct 09:52: 9 laptop periods received, 14 nights re-derived", with Sync now and Forget this laptop. This also closes the 3 Oct "Settings block not seen" item.
+- **Not checked.** The installer script itself (it writes autostart files, which I do not do from here), and the wording after many days of "did not answer".
+- **Research that shaped it** (checked 16 Oct):
+  - Android's resolver handles `.local` names with mDNS since November 2021 (`getaddrinfo`), so the pairing's `anbunew.local` is a real fallback if the router hands the laptop a new address; it does not work over a VPN or mobile data.
+  - WorkManager's 15-minute floor is a floor, not a promise, and OEM battery managers (OPPO's included) can defer or block work. Measured here, not assumed: bucket 5, allowlisted.
+  - systemd user units with `WantedBy=graphical-session.target` start at login. `loginctl enable-linger` would start them at boot without a login, which this does not need: the laptop is used logged in, and awatcher needs the session anyway.
+- **Limits.** Gap minutes are stored for nights with light samples (the only ones modelled). A boot's first minutes, before the watcher starts, are under the 10 minute floor and not reported. A boot that ended by power cut ends at its journal's last entry. Boots the journal no longer holds are never reported, so older history is unknown, not idle. An app older than this change refuses a file with `gap` rows, so the app goes first.
+- **3c is not reachable yet.** 13 of the 42 nights have a modelled suppression (10 from 14 to 24 Sept, 3 in October), against the 30 needed, and your sleep moved from 03:00 to about 21:00 to 22:00 onset, which moved the personalised evening window to 21:27 to 04:54 as well. The fit will skip nights with unrecorded laptop time.
 
 ## Phase 3 readiness
 

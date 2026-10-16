@@ -224,6 +224,34 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun schemaSevenMigratesToEightAddingLaptopGapsAndKeepingEveryNightAndSpan() = runTest {
+        val file = freshFile("migration-test-7.db")
+        createSchema(file, version = 7) { db ->
+            db.execSQL("INSERT INTO event_components (id, packageName, className) VALUES (1, 'android', '')")
+            db.execSQL("INSERT INTO raw_events (id, timestamp, utcOffsetMinutes, eventType, componentId) VALUES (1, 1000, 330, 15, 1)")
+            db.execSQL(
+                """INSERT INTO nights (dateOfNight, estimatedSleepOnset, estimatedWakeTime, confidence, source, eveningScreenMinutes,
+                   postOnsetInterruptions, lightScreenMinutes, lightLaptopMinutes) VALUES ('2026-09-15', 100, 200, 0.5, 'INFERRED', 12, 1, 7, 30)""",
+            )
+            db.execSQL("INSERT INTO laptop_spans (host, startTs, endTs, backlight, warmFilter) VALUES ('workbook', 1000, 2000, NULL, 1)")
+        }
+
+        val room = open(file)
+        try {
+            assertEquals(listOf(RawEvent(1, 1000, 330, 15, "android", "")), room.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 10))
+            val night = room.sleep().nights().single()
+            assertEquals(30, night.lightLaptopMinutes)
+            assertEquals(0, night.lightLaptopGapMinutes)
+            assertEquals(listOf(LaptopSpanEntity("workbook", 1000, 2000, null, true)), room.laptop().overlapping(1500, 1500))
+            room.laptop().insertGaps(listOf(LaptopGapEntity("workbook", 3000, 4000)))
+            assertEquals(listOf(LaptopGapEntity("workbook", 3000, 4000)), room.laptop().gapsOverlapping(3500, 3600))
+            assertEquals(emptyList<LaptopGapEntity>(), room.laptop().gapsOverlapping(4000, 5000))
+        } finally {
+            room.close()
+        }
+    }
+
     private fun freshFile(name: String): File = context.getDatabasePath(name).apply {
         parentFile?.mkdirs()
         delete()

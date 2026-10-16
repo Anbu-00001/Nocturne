@@ -173,6 +173,11 @@ data class NightEntity(
     @ColumnInfo(defaultValue = "0") val modelRunId: Long = 0,
     /** Schema 7. Minutes of the light interval someone was at a laptop, whose screen the suppression band includes. */
     @ColumnInfo(defaultValue = "0") val lightLaptopMinutes: Int = 0,
+    /**
+     * Schema 8. Minutes of the light interval the laptop was on and nothing recorded its use. The laptop minutes above, and so
+     * the suppression, are then a floor: the user may have been at it. Zero where no laptop has ever sent its use.
+     */
+    @ColumnInfo(defaultValue = "0") val lightLaptopGapMinutes: Int = 0,
 )
 
 /**
@@ -304,6 +309,14 @@ data class LaptopHostEntity(
     val lastImportAt: Long,
     /** Spans in the latest import. */
     val lastImportSpans: Int,
+)
+
+/** Schema 8. Time a laptop was on and nothing recorded its use (see LaptopGap); replaced per host by each import, like its spans. */
+@Entity(tableName = "laptop_gaps", primaryKeys = ["host", "fromTs"], indices = [Index("toTs")])
+data class LaptopGapEntity(
+    val host: String,
+    val fromTs: Long,
+    val toTs: Long,
 )
 
 /** Time zones observed on the device, so each event's offset can be resolved for its own instant. */

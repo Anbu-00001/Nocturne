@@ -20,4 +20,14 @@ object LaptopActivity {
     /** Milliseconds of the disjoint ranges [merged] inside [fromTs] until [toTs]. */
     fun overlapMs(merged: List<LongRange>, fromTs: Long, toTs: Long): Long =
         merged.sumOf { r -> maxOf(0L, minOf(r.last, toTs) - maxOf(r.first, fromTs)) }
+
+    /** Milliseconds of [fromTs] until [toTs] inside any of [gaps]; gaps of several hosts may overlap and count once. */
+    fun unrecordedMs(gaps: List<LongRange>, fromTs: Long, toTs: Long): Long {
+        val joined = ArrayList<LongRange>()
+        for (g in gaps.sortedBy { it.first }) {
+            val last = joined.lastOrNull()
+            if (last != null && g.first <= last.last) joined[joined.lastIndex] = last.first..maxOf(last.last, g.last) else joined += g
+        }
+        return overlapMs(joined, fromTs, toTs)
+    }
 }

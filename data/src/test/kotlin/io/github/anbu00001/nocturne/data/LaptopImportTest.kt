@@ -106,6 +106,37 @@ class LaptopImportTest {
     }
 
     @Test
+    fun aGapInTheLaptopsRecordingIsToldToTheNightsItOverlapsAndSendingItAgainChangesNothing() = runTest {
+        seedTwelveNights()
+        val eveningStart = ist("2026-09-10", "21:00")
+        db.light().insert(LightSampleEntity(timestamp = eveningStart, ambientLux = 20f, screenBrightness = 0.2f, screenOn = true, foregroundPackage = null, brightnessSetting = 800, darkUi = true, warmFilter = true))
+        val derived = DerivedTables(db)
+        derived.recomputeNights(config)
+        assertEquals(0, night("2026-09-10").lightLaptopGapMinutes)
+
+        val gap = "gap,workbook,${ist("2026-09-10", "21:30")},${ist("2026-09-10", "22:15")}"
+        var result: LaptopImport.Result? = null
+        derived.updateNights(config) { LaptopImport(db).import(file(gap)).also { result = it }.changedFromTs }
+        assertEquals(1, result!!.gaps)
+        assertEquals(ist("2026-09-10", "21:30"), result!!.changedFromTs)
+        assertEquals(45, night("2026-09-10").lightLaptopGapMinutes)
+        assertEquals(0, night("2026-09-09").lightLaptopGapMinutes)
+
+        // Incremental equals full, and the same file again changes nothing.
+        val incremental = db.sleep().nights()
+        derived.recomputeNights(config)
+        assertEquals(incremental, db.sleep().nights())
+        assertEquals(0, derived.updateNights(config) { LaptopImport(db).import(file(gap)).also { result = it }.changedFromTs })
+        assertNull(result!!.changedFromTs)
+
+        // A later file that no longer has the gap takes it away, and the night follows.
+        derived.updateNights(config) { LaptopImport(db).import(file()).also { result = it }.changedFromTs }
+        assertEquals(ist("2026-09-10", "21:30"), result!!.changedFromTs)
+        assertEquals(0, night("2026-09-10").lightLaptopGapMinutes)
+        assertTrue(db.laptop().gapsOverlapping(0, Long.MAX_VALUE).isEmpty())
+    }
+
+    @Test
     fun theExportListsSessionsAndNightsForActivityWatch() = runTest {
         seedTwelveNights()
         DerivedTables(db).recomputeNights(config)
