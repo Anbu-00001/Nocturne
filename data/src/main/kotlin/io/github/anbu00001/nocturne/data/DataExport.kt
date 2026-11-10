@@ -44,7 +44,13 @@ object DataExport {
         Table("sleep_reports"),
         Table("power_samples"),
         Table("light_samples"),
-        Table("reflections", "id, promptedAt, answeredAt, gapStartTs, gapEndTs, rating, note IS NOT NULL AS hasNote, dismissed, source"),
+        // A daily check-in (source MOOD) packs its taps into rating; they are also written out as three columns of 1 to 5.
+        Table(
+            "reflections",
+            "id, promptedAt, answeredAt, gapStartTs, gapEndTs, rating, note IS NOT NULL AS hasNote, dismissed, source, " +
+                "CASE WHEN source = 'MOOD' THEN rating / 100 END AS pleasant, CASE WHEN source = 'MOOD' THEN rating / 10 % 10 END AS energy, " +
+                "CASE WHEN source = 'MOOD' AND rating % 10 > 0 THEN rating % 10 END AS tension",
+        ),
         Table("focus_blocks"),
         Table("zone_changes"),
         Table("harvest_runs"),
@@ -53,6 +59,7 @@ object DataExport {
         Table("laptop_spans"),
         Table("laptop_hosts"),
         Table("laptop_gaps"),
+        Table("laptop_music"),
     )
 
     /** Tables deliberately not exported; DataExportTest fails when a new table is in neither list. */

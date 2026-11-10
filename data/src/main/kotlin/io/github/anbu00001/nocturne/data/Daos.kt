@@ -52,6 +52,14 @@ abstract class RawEventDao {
     @Query("SELECT EXISTS(SELECT 1 FROM raw_events WHERE eventType = :type AND timestamp >= :sinceTs)")
     abstract suspend fun anySince(type: Int, sinceTs: Long): Boolean
 
+    /** One component's events of the given types, in harvest order: a playback service's starts and stops. */
+    @Query(
+        """SELECT e.timestamp AS timestamp, e.eventType AS eventType FROM raw_events e JOIN event_components c ON c.id = e.componentId
+           WHERE c.packageName = :packageName AND c.className = :className AND e.eventType IN (:types)
+           ORDER BY e.timestamp, e.id""",
+    )
+    abstract suspend fun componentEvents(packageName: String, className: String, types: List<Int>): List<TimedEvent>
+
     @Query("SELECT MIN(timestamp) FROM raw_events")
     abstract suspend fun firstTimestamp(): Long?
 
@@ -86,6 +94,8 @@ data class NightTotals(
     val eveningScreenMs: Long,
 )
 
+data class TimedEvent(val timestamp: Long, val eventType: Int)
+
 data class PackageCount(val packageName: String, val n: Int)
 
 @Dao
@@ -111,6 +121,14 @@ interface SessionDao {
 
     @Query("SELECT DISTINCT nightDate FROM sessions ORDER BY nightDate")
     suspend fun nightDates(): List<String>
+
+    /** Each app's foreground time in sessions that started in [fromTs, toTs), longest first. */
+    @Query(
+        """SELECT a.packageName AS packageName, SUM(a.foregroundMs) AS foregroundMs
+           FROM session_apps a JOIN sessions s ON s.startTs = a.sessionStartTs
+           WHERE s.startTs >= :fromTs AND s.startTs < :toTs GROUP BY a.packageName ORDER BY foregroundMs DESC""",
+    )
+    suspend fun appTimeBetween(fromTs: Long, toTs: Long): List<AppTime>
 
     @Query("SELECT * FROM sessions WHERE nightDate = :nightDate ORDER BY startTs")
     fun observeNight(nightDate: String): Flow<List<SessionEntity>>
@@ -189,8 +207,8 @@ interface ReflectionDao {
     @Insert
     suspend fun insert(reflection: ReflectionEntity): Long
 
-    /** Rows asked or labelled since [sinceTs], and older rows about gaps that ended since then. */
-    @Query("SELECT * FROM reflections WHERE promptedAt >= :sinceTs OR gapEndTs >= :sinceTs ORDER BY promptedAt, id")
+    /** Rows asked or labelled since [sinceTs], and older rows about gaps that ended since then. Daily check-ins are not gap rows and are left out. */
+    @Query("SELECT * FROM reflections WHERE source != 'MOOD' AND (promptedAt >= :sinceTs OR gapEndTs >= :sinceTs) ORDER BY promptedAt, id")
     suspend fun since(sinceTs: Long): List<ReflectionEntity>
 
     @Query("SELECT * FROM reflections WHERE id = :id")
@@ -207,7 +225,25 @@ interface ReflectionDao {
 
     @Query("SELECT COUNT(*) FROM reflections")
     fun observeCount(): Flow<Int>
+
+    /** Daily check-ins, oldest day first; gapStartTs is the start of the day each is about. */
+    @Query("SELECT * FROM reflections WHERE source = 'MOOD' ORDER BY gapStartTs")
+    suspend fun checkIns(): List<ReflectionEntity>
+
+    @Query("SELECT * FROM reflections WHERE source = 'MOOD' ORDER BY gapStartTs")
+    fun observeCheckIns(): Flow<List<ReflectionEntity>>
+
+    @Query("DELETE FROM reflections WHERE source = 'MOOD' AND gapStartTs = :dayStartTs")
+    suspend fun deleteCheckIn(dayStartTs: Long)
+
+    @Query("SELECT nightDate AS nightDate, startTs AS startTs FROM sessions WHERE trigger = 'ALARM' AND nightDate >= :fromNight ORDER BY startTs")
+    suspend fun alarmWakes(fromNight: String): List<AlarmWake>
+
+    @Query("SELECT startTs FROM sessions WHERE unlocked AND startTs >= :fromTs ORDER BY startTs")
+    suspend fun unlocksFrom(fromTs: Long): List<Long>
 }
+
+data class AlarmWake(val nightDate: String, val startTs: Long)
 
 @Dao
 interface LaptopDao {
@@ -242,6 +278,18 @@ interface LaptopDao {
 
     @Insert
     suspend fun insertGaps(gaps: List<LaptopGapEntity>)
+
+    @Query("SELECT * FROM laptop_music WHERE host = :host AND startTs >= :fromTs AND startTs < :toTs ORDER BY startTs")
+    suspend fun musicStarting(host: String, fromTs: Long, toTs: Long): List<LaptopMusicEntity>
+
+    @Query("DELETE FROM laptop_music WHERE host = :host AND startTs >= :fromTs AND startTs < :toTs")
+    suspend fun deleteMusic(host: String, fromTs: Long, toTs: Long): Int
+
+    @Insert
+    suspend fun insertMusic(music: List<LaptopMusicEntity>)
+
+    @Query("SELECT * FROM laptop_music ORDER BY startTs")
+    suspend fun allMusic(): List<LaptopMusicEntity>
 
     /** Gaps sharing any time with [fromTs, toTs]. */
     @Query("SELECT * FROM laptop_gaps WHERE fromTs < :toTs AND toTs > :fromTs ORDER BY fromTs")
@@ -325,6 +373,12 @@ interface SleepDao {
 
     @Query("SELECT * FROM sleep_reports WHERE dateOfNight = :date")
     fun observeReport(date: String): Flow<SleepReportEntity?>
+
+    @Query("SELECT * FROM sleep_reports WHERE dateOfNight = :date")
+    suspend fun report(date: String): SleepReportEntity?
+
+    @Query("SELECT * FROM nights WHERE dateOfNight = :date")
+    suspend fun night(date: String): NightEntity?
 
     @Query("SELECT COUNT(*) FROM sleep_reports")
     fun observeReportCount(): Flow<Int>

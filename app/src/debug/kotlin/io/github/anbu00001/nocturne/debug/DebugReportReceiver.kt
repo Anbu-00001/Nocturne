@@ -1,6 +1,8 @@
 package io.github.anbu00001.nocturne.debug
 
 import android.app.Activity
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -8,7 +10,14 @@ import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.core.focus.TimerKind
 import io.github.anbu00001.nocturne.core.reflect.GapCard
 import io.github.anbu00001.nocturne.core.reflect.PhoneDownGap
+import io.github.anbu00001.nocturne.data.MindHistory
+import io.github.anbu00001.nocturne.data.MusicHistory
+import io.github.anbu00001.nocturne.ui.MindText
 import io.github.anbu00001.nocturne.export.FullExport
+import io.github.anbu00001.nocturne.tone.Tone
+import io.github.anbu00001.nocturne.ui.GlanceText
+import io.github.anbu00001.nocturne.ui.formatNight
+import io.github.anbu00001.nocturne.widget.NocturneWidget
 import java.io.File
 import kotlinx.coroutines.launch
 import java.time.Instant
@@ -31,6 +40,10 @@ import java.time.ZoneId
  *   ... --es focus list                              recorded blocks with their ids
  *   ... --es focus delete --el id 3                  remove a test block from the history
  *   ... --es gaps preview                            the card the rules would show now (no prompt recorded) and the weekly list
+ *   ... --es night 2026-11-09 --ez confirm true  "About right" for that night, as the widget's tap does
+ *   ... --es glance show                         every line the widget and Patterns' "This week" would show now
+ *   ... --es mind show                           Patterns' Rhythm section and the check-in lines (no check-in is ever written from here)
+ *   ... --es music show                          music before sleep for the last 14 nights, and Patterns' comparison
  *   ... --es export all                              Settings' "Export all data" into files/exports, then
  *       adb exec-out run-as io.github.anbu00001.nocturne cat files/exports/<name printed> > export.zip
  */
@@ -43,6 +56,10 @@ class DebugReportReceiver : BroadcastReceiver() {
             intent.hasExtra("focus") -> reply(runCatching { focus(app, intent) })
             intent.hasExtra("gaps") -> async(app) { gaps(app) }
             intent.hasExtra("export") -> async(app) { export(app) }
+            intent.hasExtra("mind") -> async(app) { mind(app) }
+            intent.hasExtra("music") -> async(app) { music(app) }
+            intent.hasExtra("glance") -> async(app) { glance(app) }
+            intent.getBooleanExtra("confirm", false) -> async(app) { confirm(app, intent) }
             else -> reply(runCatching { sleep(app, intent) })
         }
     }
@@ -86,6 +103,49 @@ class DebugReportReceiver : BroadcastReceiver() {
             }
             "state" -> "running ${focus.running.value}, exact alarms ${focus.exactAlarms}"
             else -> error("--es focus start|stop|state, not $command")
+        }
+    }
+
+    /** The widget's lines, then Patterns' paragraph, as they would be drawn now; whether a widget is placed is said too. */
+    private suspend fun glance(app: NocturneApp): String {
+        val glance = app.digests.glance(System.currentTimeMillis())
+        val night = glance.night
+        val placed = AppWidgetManager.getInstance(app).getAppWidgetIds(ComponentName(app, NocturneWidget::class.java)).size
+        val widget = listOfNotNull(
+            night?.let { Tone.LastNight.nightTitle(formatNight(it.dateOfNight)) },
+            night?.let { GlanceText.night(it, glance.report) } ?: Tone.Widget.EMPTY,
+            night?.takeIf { GlanceText.canConfirm(it, glance.report) }?.let { "[${Tone.Sleep.ABOUT_RIGHT}] [${Tone.Sleep.NOT_RIGHT}]" },
+            glance.week?.let(GlanceText::weekShort),
+            glance.week?.let(GlanceText::beforeShort),
+            glance.laptopQuietSince?.let(GlanceText::laptopQuiet),
+        )
+        val patterns = glance.week?.let { GlanceText.weekLines(it) + GlanceText.lateApps(it, app.labels::of) }.orEmpty()
+        return "widgets placed: $placed\nWIDGET\n" + widget.joinToString("\n") { "  $it" } + "\nPATTERNS\n" + patterns.joinToString("\n") { "  $it" }
+    }
+
+    private suspend fun mind(app: NocturneApp): String {
+        val now = System.currentTimeMillis()
+        val report = MindHistory(app.database).report(now, ZoneId.systemDefault().rules.getOffset(Instant.ofEpochMilli(now)).totalSeconds / 60)
+        return "RHYTHM\n" + MindText.lines(report).joinToString("\n") { "  ${it.text}" } + "\nCHECK-IN\n" + MindText.links(report).joinToString("\n") { "  ${it.text}" }
+    }
+
+    private suspend fun music(app: NocturneApp): String {
+        val report = MusicHistory(app.database).report()
+        val nights = report.byNight.entries.toList().takeLast(14).joinToString("\n") { (date, m) -> "  $date  " + GlanceText.music(m).joinToString(" ") }
+        return "LAST NIGHTS\n$nights\nPATTERNS\n" + (GlanceText.musicDays(report) + GlanceText.musicSplit(report)).joinToString("\n") { "  $it" }
+    }
+
+    /** Waits for the nights to be re-derived, so the reply describes the night as it now stands. */
+    private suspend fun confirm(app: NocturneApp, intent: Intent): String {
+        val night = requireNotNull(intent.getStringExtra("night")) { "--es night YYYY-MM-DD is missing" }
+        val before = app.database.sleep().report(night)
+        app.confirmSleepEstimate(night).join()
+        val after = app.database.sleep().report(night)
+        val row = app.database.sleep().night(night)
+        return when {
+            before != null -> "$night already has an entry (confirmed ${before.confirmed}); nothing changed"
+            after == null -> "$night has no estimate to confirm"
+            else -> "confirmed $night: ${row?.let { GlanceText.night(it, after) }}, source ${row?.source}, confidence ${row?.confidence}"
         }
     }
 

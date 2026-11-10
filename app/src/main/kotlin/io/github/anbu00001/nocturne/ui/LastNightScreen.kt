@@ -32,6 +32,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -155,11 +156,12 @@ private fun List<Int>.median(): Double {
 }
 
 @Composable
-fun LastNightScreen(app: NocturneApp) {
+fun LastNightScreen(app: NocturneApp, enterTimes: Boolean = false) {
     val vm = viewModel { LastNightViewModel(app) }
     val state by vm.state.collectAsStateWithLifecycle()
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
-    var entering by remember { mutableStateOf(false) }
+    // "Not right" on the widget lands here with the pickers already up; rememberSaveable so a rotation does not reopen them.
+    var entering by rememberSaveable { mutableStateOf(enterTimes) }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -213,7 +215,14 @@ fun LastNightScreen(app: NocturneApp) {
             }
         }
         item {
-            SleepSummary(night, onEnter = { entering = true }, onRemove = { app.removeSleepReport(nightDate) })
+            SleepSummary(
+                night,
+                state.report,
+                onConfirm = { app.confirmSleepEstimate(nightDate) },
+                onEnter = { entering = true },
+                onRemove = { app.removeSleepReport(nightDate) },
+            )
+            NightMusicLines(app, night)
         }
         item {
             NightTimeline(nightDate, state.sessions, state.laptop, night, window, Modifier.fillMaxWidth().height(140.dp))
@@ -256,15 +265,18 @@ fun LastNightScreen(app: NocturneApp) {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun SleepSummary(night: NightEntity?, onEnter: () -> Unit, onRemove: () -> Unit) {
+private fun SleepSummary(night: NightEntity?, report: SleepReportEntity?, onConfirm: () -> Unit, onEnter: () -> Unit, onRemove: () -> Unit) {
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
     val onset = night?.estimatedSleepOnset
     val wake = night?.estimatedWakeTime
     val reported = night?.source == SleepSource.USER_REPORTED
+    // One tap keeps the estimate as the user's night; the entry dialog stays for nights the estimate got wrong.
+    val canConfirm = night != null && GlanceText.canConfirm(night, report)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         if (night != null && night.noSleep) {
-            Text(if (reported) Tone.Sleep.NO_SLEEP_REPORTED else Tone.Sleep.NO_SLEEP_FOUND, style = MaterialTheme.typography.titleMedium)
+            Text(GlanceText.night(night, report), style = MaterialTheme.typography.titleMedium)
             if (!reported) Text(Tone.Sleep.noSleepBasis(confidenceLabel(night.confidence)), color = muted)
         } else if (night == null || onset == null || wake == null) {
             Text(Tone.Sleep.NONE, color = muted)
@@ -273,20 +285,19 @@ private fun SleepSummary(night: NightEntity?, onEnter: () -> Unit, onRemove: () 
         } else {
             val offset = night.utcOffsetMinutes
             Text(
-                if (reported) {
-                    Tone.Sleep.reported(clockText(onset, offset), clockText(wake, offset))
-                } else {
-                    Tone.Sleep.estimated(clockText(onset, offset), clockText(wake, offset))
-                },
+                if (reported) GlanceText.night(night, report) else Tone.Sleep.estimated(clockText(onset, offset), clockText(wake, offset)),
                 style = MaterialTheme.typography.titleMedium,
             )
             if (!reported) Text(Tone.Sleep.basis(confidenceLabel(night.confidence)), color = muted)
             Text(Tone.Sleep.interruptions(night.postOnsetInterruptions), color = muted)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        // Three buttons do not fit one row at the A18's width, so they wrap.
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (canConfirm) OutlinedButton(onClick = onConfirm) { Text(Tone.Sleep.ABOUT_RIGHT) }
             OutlinedButton(onClick = onEnter) { Text(if (reported) Tone.Sleep.CHANGE else Tone.Sleep.CORRECT) }
             if (reported) TextButton(onClick = onRemove) { Text(Tone.Sleep.REMOVE) }
         }
+        if (canConfirm) Text(Tone.Sleep.CONFIRM_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
     }
 }
 
@@ -454,7 +465,7 @@ private fun NightTimeline(
 
 private val nightFormat = DateTimeFormatter.ofPattern("EEE d MMM")
 
-private fun formatNight(isoDate: String): String = LocalDate.parse(isoDate).format(nightFormat)
+fun formatNight(isoDate: String): String = LocalDate.parse(isoDate).format(nightFormat)
 
 fun clockText(ts: Long, offsetMinutes: Int): String = minuteText(LocalClock.minuteOfDay(ts, offsetMinutes))
 

@@ -91,8 +91,8 @@ class DataExportTest {
 
         val reflections = files.getValue("reflections.csv")
         assertFalse(reflections.contains("private words"))
-        assertEquals("id,promptedAt,answeredAt,gapStartTs,gapEndTs,rating,hasNote,dismissed,source", reflections.lines().first())
-        assertEquals("1,5,6,1,4,3,1,0,PROMPT", reflections.lines()[1])
+        assertEquals("id,promptedAt,answeredAt,gapStartTs,gapEndTs,rating,hasNote,dismissed,source,pleasant,energy,tension", reflections.lines().first())
+        assertEquals("1,5,6,1,4,3,1,0,PROMPT,,,", reflections.lines()[1])
 
         val night = files.getValue("nights.csv").lines()
         val columns = night.first().split(',')
@@ -107,7 +107,7 @@ class DataExportTest {
         )
         assertEquals(2L, summary.rows["raw_events"])
         assertEquals(5_003L, summary.rows["light_samples"])
-        assertEquals(16, summary.rows.size)
+        assertEquals(17, summary.rows.size)
     }
 
     private fun unzip(bytes: ByteArray): Map<String, String> {

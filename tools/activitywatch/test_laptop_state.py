@@ -8,6 +8,7 @@ from pathlib import Path
 
 from awclient import iso
 from fake_activitywatch import FakeActivityWatch, FakeServer
+import laptop_state
 from laptop_state import AfkTracker, Beat, backlight_share, panel_size_mm
 
 
@@ -60,6 +61,13 @@ class Readings(unittest.TestCase):
             (panel / "edid").write_bytes(bytes(edid))
             self.assertEqual((345, 215), panel_size_mm(Path(root, "drm")))
             self.assertIsNone(panel_size_mm(Path(root, "nothing")))
+
+
+class Music(unittest.TestCase):
+    def test_media_players_are_found_among_the_bus_names(self):
+        out = "(['org.freedesktop.DBus', ':1.42', 'org.mpris.MediaPlayer2.spotify', 'org.mpris.MediaPlayer2.firefox.instance_1_23', 'org.gnome.Shell'],)"
+        self.assertEqual(["org.mpris.MediaPlayer2.firefox.instance_1_23", "org.mpris.MediaPlayer2.spotify"], laptop_state.mpris_players(out))
+        self.assertEqual([], laptop_state.mpris_players("(['org.gnome.Shell'],)"))
 
 
 if __name__ == "__main__":

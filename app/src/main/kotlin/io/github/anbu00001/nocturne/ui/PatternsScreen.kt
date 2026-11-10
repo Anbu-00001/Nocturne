@@ -120,6 +120,9 @@ fun PatternsScreen(app: NocturneApp) {
                 Tone.Patterns.range(nights.size, shortDate(nights.first().nightDate), shortDate(nights.last().nightDate)),
                 color = muted,
             )
+            WeekSection(app, sleep)
+            MusicSection(app, sleep)
+            RhythmSection(app, sleep)
             SleepChart(sleep)
             RegularitySection(regularity)
             ShiftsSection(app, sleep)

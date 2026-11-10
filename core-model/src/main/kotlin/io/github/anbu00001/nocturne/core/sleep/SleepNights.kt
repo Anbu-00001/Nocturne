@@ -8,8 +8,14 @@ import java.time.temporal.TemporalAdjusters
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** The user's own "I slept about X to Y" (spec §6.3), or "I did not sleep" with both times null. Primary data: kept, never derived. */
-data class SleepReport(val date: LocalDate, val onsetTs: Long?, val wakeTs: Long?) {
+/**
+ * The user's own "I slept about X to Y" (spec §6.3), or "I did not sleep" with both times null. Primary data: kept, never derived.
+ *
+ * [confirmed] marks one tap on "About right": the times are the estimate the user was shown, not times they typed. Such a
+ * night counts as the user's word for the evening window, the priors and the sentinel, but it cannot say how far the
+ * inference is from the truth, because it is the inference; see [CorrectiveOffsets].
+ */
+data class SleepReport(val date: LocalDate, val onsetTs: Long?, val wakeTs: Long?, val confirmed: Boolean = false) {
     val noSleep: Boolean get() = onsetTs == null || wakeTs == null
 }
 
@@ -48,10 +54,12 @@ data class CorrectiveOffsets(val onsetMs: Long, val wakeMs: Long, val nights: In
         val NONE = CorrectiveOffsets(0, 0, 0)
 
         fun from(nights: List<NightSleep>, config: SleepConfig): CorrectiveOffsets {
-            // Only nights where both the user and the inference describe a sleep can say how far apart they are.
+            // Only nights where both the user and the inference describe a sleep can say how far apart they are. A
+            // confirmed estimate is left out: its gap is zero by construction, and enough of them would pull a real
+            // offset learned from typed times back to nothing.
             val pairs = nights.mapNotNull { n ->
-                val onset = n.report?.onsetTs
-                val wake = n.report?.wakeTs
+                val onset = n.report?.takeUnless { it.confirmed }?.onsetTs
+                val wake = n.report?.takeUnless { it.confirmed }?.wakeTs
                 val inferred = n.inferred?.takeUnless { it.noSleep }
                 if (onset != null && wake != null && inferred != null) Triple(onset, wake, inferred) else null
             }

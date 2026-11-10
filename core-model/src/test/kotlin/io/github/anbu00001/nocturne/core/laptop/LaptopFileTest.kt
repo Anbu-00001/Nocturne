@@ -27,6 +27,7 @@ class LaptopFileTest {
             file.spans,
         )
         assertEquals(listOf(LaptopGap("workbook", ist("2026-09-14", "18:30"), ist("2026-09-14", "19:15"))), file.gaps)
+        assertEquals(listOf(LaptopMusic("workbook", ist("2026-09-14", "22:00"), ist("2026-09-14", "22:45"))), file.music)
         val profile = file.displays.single().profile()
         assertEquals(0.345 * 0.215, profile.screenAreaM2, 1e-12)
         assertEquals(2.0 + 248.0 * 0.06, profile.luminanceAtShare(0.06), 1e-9)
@@ -60,6 +61,21 @@ class LaptopFileTest {
         assertTrue("outside its coverage" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,500,1500") }.message!!)
         assertTrue("no coverage" in assertFailsWith<IllegalArgumentException> { parse(display, "gap,workbook,1000,1500") }.message!!)
         assertTrue("two gaps" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "gap,workbook,1000,1500", "gap,workbook,1000,1600") }.message!!)
+    }
+
+    @Test
+    fun `music rows start inside their host's coverage, one per start, and a file without any still parses`() {
+        val display = "display,workbook,345,215,2.0,250.0"
+        val coverage = "coverage,workbook,1000,2000"
+        fun parse(vararg rows: String) = LaptopFileFormat.parse((listOf(LaptopFileFormat.HEADER) + rows).asSequence())
+        // Like a span, a stretch still playing when the file was written may end after the coverage does.
+        assertEquals(listOf(LaptopMusic("workbook", 1500, 2500)), parse(display, coverage, "music,workbook,1500,2500").music)
+        assertEquals(emptyList(), parse(display, coverage).music)
+        assertTrue("music needs 4" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "music,workbook,1000") }.message!!)
+        assertTrue("empty music" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "music,workbook,1500,1500") }.message!!)
+        assertTrue("outside its coverage" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "music,workbook,500,1500") }.message!!)
+        assertTrue("no coverage" in assertFailsWith<IllegalArgumentException> { parse(display, "music,workbook,1000,1500") }.message!!)
+        assertTrue("two music rows" in assertFailsWith<IllegalArgumentException> { parse(display, coverage, "music,workbook,1000,1500", "music,workbook,1000,1600") }.message!!)
     }
 
     @Test

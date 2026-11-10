@@ -46,11 +46,23 @@ data class LaptopGap(val host: String, val fromTs: Long, val toTs: Long) {
     }
 }
 
+/**
+ * A music player on the computer was playing from [startTs] to [endTs]: the player's own "Playing" state (MPRIS), read by
+ * the laptop's watcher. Like a span it belongs to the file whose coverage holds its start. No track, artist or player name
+ * crosses to the phone.
+ */
+data class LaptopMusic(val host: String, val startTs: Long, val endTs: Long) {
+    init {
+        require(endTs > startTs) { "empty music for $host" }
+    }
+}
+
 data class LaptopFile(
     val displays: List<LaptopDisplay>,
     val coverage: List<LaptopCoverage>,
     val spans: List<LaptopSpan>,
     val gaps: List<LaptopGap> = emptyList(),
+    val music: List<LaptopMusic> = emptyList(),
 )
 
 /**
@@ -63,10 +75,13 @@ data class LaptopFile(
  * coverage,<host>,<from ms>,<to ms>
  * span,<host>,<start ms>,<end ms>,<backlight 0..1 or empty>,<1, 0 or empty>
  * gap,<host>,<from ms>,<to ms>
+ * music,<host>,<start ms>,<end ms>
  * ```
  * Times are UTC epoch milliseconds. Every covered host needs a display row, every span its host's coverage and a start
  * of its own, every gap its host's coverage to lie within; a file that breaks any rule is refused whole, never imported
- * in part. Gap rows are optional, and a laptop that cannot tell when it was on sends none.
+ * in part. Gap rows are optional, and a laptop that cannot tell when it was on sends none. Music rows are optional too
+ * (schema 10): each starts inside its host's coverage and no two of a host start together. An app from before them refuses a
+ * file that has any, so the phone is updated before the laptop starts sending them.
  */
 object LaptopFileFormat {
     const val HEADER = "nocturne-laptop,1"
@@ -78,6 +93,7 @@ object LaptopFileFormat {
         val coverage = ArrayList<LaptopCoverage>()
         val spans = ArrayList<LaptopSpan>()
         val gaps = ArrayList<LaptopGap>()
+        val music = ArrayList<LaptopMusic>()
         var header = false
         lines.forEachIndexed { index, raw ->
             val line = raw.trimEnd('\r')
@@ -118,6 +134,10 @@ object LaptopFileFormat {
                         if (f.size != 4) fail("gap needs 4 fields")
                         gaps += LaptopGap(host(), long(2), long(3))
                     }
+                    "music" -> {
+                        if (f.size != 4) fail("music needs 4 fields")
+                        music += LaptopMusic(host(), long(2), long(3))
+                    }
                     else -> fail("unknown row \"${f[0]}\"")
                 }
             } catch (e: IllegalArgumentException) {
@@ -141,6 +161,11 @@ object LaptopFileFormat {
             require(g.fromTs >= c.fromTs && g.toTs <= c.toTs) { "gap at ${g.fromTs} of ${g.host} is outside its coverage" }
         }
         require(gaps.map { it.host to it.fromTs }.toSet().size == gaps.size) { "two gaps of one host start at the same time" }
-        return LaptopFile(displays, coverage, spans, gaps)
+        for (m in music) {
+            val c = requireNotNull(covered[m.host]) { "no coverage for ${m.host}" }
+            require(m.startTs >= c.fromTs && m.startTs < c.toTs) { "music at ${m.startTs} of ${m.host} is outside its coverage" }
+        }
+        require(music.map { it.host to it.startTs }.toSet().size == music.size) { "two music rows of one host start at the same time" }
+        return LaptopFile(displays, coverage, spans, gaps, music)
     }
 }

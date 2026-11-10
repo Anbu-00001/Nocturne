@@ -252,6 +252,55 @@ class MigrationTest {
         }
     }
 
+    @Test
+    fun schemaEightMigratesToNineKeepingEveryReportAsTypedNotConfirmed() = runTest {
+        val file = freshFile("migration-test-8.db")
+        createSchema(file, version = 8) { db ->
+            db.execSQL("INSERT INTO event_components (id, packageName, className) VALUES (1, 'android', '')")
+            db.execSQL("INSERT INTO raw_events (id, timestamp, utcOffsetMinutes, eventType, componentId) VALUES (1, 1000, 330, 15, 1)")
+            db.execSQL(
+                "INSERT INTO sleep_reports (dateOfNight, onsetTs, wakeTs, utcOffsetMinutes, reportedAt, noSleep, sleepLatencyScore) " +
+                    "VALUES ('2026-09-09', 100, 200, 330, 300, 0, 2)",
+            )
+            db.execSQL("INSERT INTO laptop_gaps (host, fromTs, toTs) VALUES ('workbook', 3000, 4000)")
+        }
+
+        val room = open(file)
+        try {
+            assertEquals(listOf(RawEvent(1, 1000, 330, 15, "android", "")), room.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 10))
+            assertEquals(listOf(SleepReportEntity("2026-09-09", 100, 200, 330, 300, sleepLatencyScore = 2)), room.sleep().reports())
+            assertEquals(listOf(LaptopGapEntity("workbook", 3000, 4000)), room.laptop().gapsOverlapping(3500, 3600))
+            room.sleep().upsertReport(SleepReportEntity("2026-09-10", 500, 600, 330, 700, confirmed = true))
+            assertEquals(true, room.sleep().report("2026-09-10")?.confirmed)
+        } finally {
+            room.close()
+        }
+    }
+
+    @Test
+    fun schemaNineMigratesToTenAddingLaptopMusicAndKeepingConfirmations() = runTest {
+        val file = freshFile("migration-test-9.db")
+        createSchema(file, version = 9) { db ->
+            db.execSQL("INSERT INTO event_components (id, packageName, className) VALUES (1, 'android', '')")
+            db.execSQL("INSERT INTO raw_events (id, timestamp, utcOffsetMinutes, eventType, componentId) VALUES (1, 1000, 330, 15, 1)")
+            db.execSQL(
+                "INSERT INTO sleep_reports (dateOfNight, onsetTs, wakeTs, utcOffsetMinutes, reportedAt, noSleep, sleepLatencyScore, confirmed) " +
+                    "VALUES ('2026-11-09', 100, 200, 330, 300, 0, NULL, 1)",
+            )
+        }
+
+        val room = open(file)
+        try {
+            assertEquals(listOf(RawEvent(1, 1000, 330, 15, "android", "")), room.rawEvents().pageAfter(Long.MIN_VALUE, Long.MIN_VALUE, 10))
+            assertEquals(listOf(SleepReportEntity("2026-11-09", 100, 200, 330, 300, confirmed = true)), room.sleep().reports())
+            assertEquals(emptyList<LaptopMusicEntity>(), room.laptop().allMusic())
+            room.laptop().insertMusic(listOf(LaptopMusicEntity("workbook", 3000, 4000)))
+            assertEquals(listOf(LaptopMusicEntity("workbook", 3000, 4000)), room.laptop().musicStarting("workbook", 3000, 3001))
+        } finally {
+            room.close()
+        }
+    }
+
     private fun freshFile(name: String): File = context.getDatabasePath(name).apply {
         parentFile?.mkdirs()
         delete()

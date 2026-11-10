@@ -39,7 +39,7 @@ from pathlib import Path
 import lansync
 import power_log
 from awclient import SERVER, ActivityWatch, event_interval, iso, now_ms, parse_ts
-from laptop_state import afk_bucket, display_bucket, host_name, panel_size_mm, watch
+from laptop_state import afk_bucket, display_bucket, host_name, music_bucket, panel_size_mm, watch
 from engagement import summary as engagement_summary
 from tonight import PhoneSummary, state_dir
 
@@ -117,10 +117,22 @@ def spans_from_events(afk: list[dict], display: list[dict], reach_ms: int) -> li
     return spans
 
 
-def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Span], gaps: list[tuple[int, int]] = ()) -> str:
+def music_from_events(events: list[dict], min_ms: int = 60_000) -> list[tuple[int, int]]:
+    """
+    Stretches a media player was playing, from the music bucket's events, joined where they touch. Stretches under
+    [min_ms] are dropped: a notification sound or a few seconds of a clip is not listening.
+    """
+    playing = [event_interval(e) for e in events if e.get("data", {}).get("playing")]
+    return [(start, end) for start, end in merge(playing) if end - start >= min_ms]
+
+
+def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Span], gaps: list[tuple[int, int]] = (),
+                music: list[tuple[int, int]] = ()) -> str:
     """
     The format core-model's LaptopFileFormat reads; spans starting outside the coverage are left to other files. A gap is time
-    the laptop was on and nothing recorded its use, inside the coverage, so the phone does not count it as idle.
+    the laptop was on and nothing recorded its use, inside the coverage, so the phone does not count it as idle. Music rows
+    are stretches a player was playing, each starting inside the coverage; a phone app older than schema 10 refuses a file
+    that has any, so none are written until some music has been recorded.
     """
     if not HOST_RE.fullmatch(display.host):
         raise ValueError(f"host {display.host!r} does not fit the file format")
@@ -142,6 +154,9 @@ def laptop_file(display: Display, cover_from: int, cover_to: int, spans: list[Sp
     for start, end in gaps:
         if cover_from <= start < end <= cover_to:
             lines.append(f"gap,{display.host},{start},{end}")
+    for start, end in music:
+        if cover_from <= start < cover_to and end > start:
+            lines.append(f"music,{display.host},{start},{end}")
     return "\n".join(lines) + "\n"
 
 
@@ -505,7 +520,10 @@ def build_laptop_file(aw: ActivityWatch, args) -> str:
     cover_from = to - args.days * DAY_MS
     afk = aw.events(afk_bucket(host), cover_from - DAY_MS, to)
     shown = aw.events(display_bucket(host), cover_from - 2 * DAY_MS, to)
-    return laptop_file(display, cover_from, to, spans_from_events(afk, shown, reach_ms=args.reach_s * 1000), gaps_from(afk, cover_from, to))
+    # The music bucket exists only once a watcher that knows about music has run.
+    played = aw.events(music_bucket(host), cover_from - DAY_MS, to) if music_bucket(host) in aw.buckets() else []
+    return laptop_file(display, cover_from, to, spans_from_events(afk, shown, reach_ms=args.reach_s * 1000), gaps_from(afk, cover_from, to),
+                       music_from_events(played))
 
 
 def sync_now(aw: ActivityWatch, args) -> None:

@@ -127,6 +127,8 @@ class LiveDatabaseTest {
                     appendPhases(room, nights)
                     appendLine()
                     appendGaps(room, nights)
+                    appendLine()
+                    appendGlance(room, derived, sleepConfig, nights)
                 },
             )
             lastJudged?.let { writeActivityMinutes(room, it) }
@@ -134,6 +136,35 @@ class LiveDatabaseTest {
         } finally {
             room.close()
         }
+    }
+
+    /**
+     * The widget's digest on the phone's history, then what "About right" on each of the last 14 nights would change. Last
+     * in the file, because it writes reports into the copy.
+     */
+    private suspend fun StringBuilder.appendGlance(room: NocturneDatabase, derived: DerivedTables, sleepConfig: SleepConfig, nights: List<NightEntity>) {
+        val glance = Digests(room).glance(System.currentTimeMillis())
+        appendLine("glance: night ${glance.night?.dateOfNight}, report ${glance.report}, laptop quiet since ${glance.laptopQuietSince?.let(Instant::ofEpochMilli)}")
+        appendLine("week digest: ${glance.week?.week}")
+        appendLine("four weeks before: ${glance.week?.baseline}")
+        glance.week?.lateApps?.forEach { appendLine("late app: $it") }
+        // Music before sleep on the real history, before any confirmation changes a night.
+        val music = MusicHistory(room).report()
+        MusicHistory(room).spans().let { kept -> appendLine("music spans kept (phone and laptop, merged): ${kept.size}, ${kept.sumOf { it.endTs - it.startTs } / 60_000} min") }
+        appendLine("music: ${music.byNight.values.count { it.eveningMinutes >= 10 }} of ${music.byNight.size} nights with 10 min or more in the evening; split ${music.split}")
+        music.byNight.entries.toList().takeLast(21).forEach { (date, m) -> appendLine("  $date $m") }
+        appendLine("rhythm: ${MindHistory(room).report(System.currentTimeMillis(), 330)}")
+        val before = nights.associateBy { it.dateOfNight }
+        val started = System.currentTimeMillis()
+        val confirmed = nights.takeLast(15).count { SleepConfirmations(room).confirm(it.dateOfNight, started) }
+        derived.recomputeNights(sleepConfig)
+        val after = room.sleep().nights()
+        val moved = after.count { n -> before[n.dateOfNight]?.let { it.estimatedSleepOnset != n.estimatedSleepOnset || it.estimatedWakeTime != n.estimatedWakeTime } ?: true }
+        fun window(n: NightEntity?) = n?.let { "%02d:%02d to %02d:%02d from ${it.windowNights} nights".format(
+            it.eveningWindowStartMinute / 60, it.eveningWindowStartMinute % 60, it.eveningWindowEndMinute / 60, it.eveningWindowEndMinute % 60) }
+        appendLine("confirming $confirmed of the last 15 nights and re-deriving took ${System.currentTimeMillis() - started} ms; nights whose times moved: $moved")
+        appendLine("  evening window was ${window(nights.lastOrNull())}, now ${window(after.lastOrNull())} (it is fixed per week, so it follows from next Monday)")
+        appendLine("  shift sentinel now: ${Sentinels(room, sleepConfig).assess()}")
     }
 
     /** Spec §6.4 on the phone's history: DLMO by night under each light scenario, set against habitual sleep. */

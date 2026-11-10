@@ -8,7 +8,7 @@ import io.github.anbu00001.nocturne.core.laptop.LaptopSpan
 /**
  * Phase 4: laptop use sent from the laptop. Each host's spans starting inside its coverage are replaced by the file's,
  * so sending the same week twice changes nothing, and a span still growing when it was sent is corrected by the next
- * send. Gaps, the time the laptop was on with nothing recording, are replaced the same way. Returns the earliest instant whose nights can differ, for the caller to re-derive in the same transaction.
+ * send. Gaps, the time the laptop was on with nothing recording, are replaced the same way, and so is music (schema 10). Returns the earliest instant whose nights can differ, for the caller to re-derive in the same transaction.
  */
 class LaptopImport(private val db: NocturneDatabase, private val now: () -> Long = System::currentTimeMillis) {
 
@@ -22,6 +22,8 @@ class LaptopImport(private val db: NocturneDatabase, private val now: () -> Long
         val changedFromTs: Long?,
         /** Gaps in the file: time the laptop was on and nothing recorded it. */
         val gaps: Int = 0,
+        /** Music rows in the file. */
+        val music: Int = 0,
     )
 
     suspend fun import(file: LaptopFile): Result = db.withTransaction {
@@ -53,6 +55,13 @@ class LaptopImport(private val db: NocturneDatabase, private val now: () -> Long
             dao.deleteGaps(coverage.host, coverage.fromTs, coverage.toTs)
             dao.insertGaps(newGaps.sortedBy { it.fromTs })
 
+            // Music is replaced the same way. No night is re-derived for it: music is read beside the nights, never into them.
+            dao.deleteMusic(coverage.host, coverage.fromTs, coverage.toTs)
+            dao.insertMusic(
+                file.music.filter { it.host == coverage.host && it.startTs >= coverage.fromTs && it.startTs < coverage.toTs }
+                    .sortedBy { it.startTs }.map { LaptopMusicEntity(it.host, it.startTs, it.endTs) },
+            )
+
             val previous = dao.host(coverage.host)
             // A corrected panel changes the light of every night this laptop was used on.
             if (previous != null && previous.display() != display) changed(previous.coveredFromTs)
@@ -70,7 +79,7 @@ class LaptopImport(private val db: NocturneDatabase, private val now: () -> Long
                 ),
             )
         }
-        Result(file.coverage.map { it.host }, file.spans.size, added, removed, changedFromTs, file.gaps.size)
+        Result(file.coverage.map { it.host }, file.spans.size, added, removed, changedFromTs, file.gaps.size, file.music.size)
     }
 }
 

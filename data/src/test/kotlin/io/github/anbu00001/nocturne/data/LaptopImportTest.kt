@@ -6,6 +6,7 @@ import androidx.test.core.app.ApplicationProvider
 import io.github.anbu00001.nocturne.core.glance.SessionKind
 import io.github.anbu00001.nocturne.core.glance.WakeTrigger
 import io.github.anbu00001.nocturne.core.laptop.LaptopFile
+import io.github.anbu00001.nocturne.core.music.NightMusic
 import io.github.anbu00001.nocturne.core.laptop.LaptopFileFormat
 import io.github.anbu00001.nocturne.core.sleep.SleepConfig
 import io.github.anbu00001.nocturne.core.time.LocalClock
@@ -134,6 +135,53 @@ class LaptopImportTest {
         assertEquals(ist("2026-09-10", "21:30"), result!!.changedFromTs)
         assertEquals(0, night("2026-09-10").lightLaptopGapMinutes)
         assertTrue(db.laptop().gapsOverlapping(0, Long.MAX_VALUE).isEmpty())
+    }
+
+    @Test
+    fun musicOnThePhoneAndTheLaptopIsCountedOncePerNightAndALaterFileCanTakeTheLaptopsAway() = runTest {
+        seedTwelveNights()
+        val derived = DerivedTables(db)
+        derived.recomputeNights(config)
+        val before = db.sleep().nights()
+        val onset = checkNotNull(night("2026-09-10").estimatedSleepOnset)
+        val minute = LocalClock.MINUTE_MS
+        // The phone's player from 50 to 20 minutes before sleep; its WorkManager service, which is not playback, all evening.
+        val spotify = "com.spotify.music"
+        val keeper = "com.spotify.musicappplatform.state.foregroundkeeperservice.impl.ForegroundKeeperService"
+        db.rawEvents().insertAll(
+            listOf(
+                RawEvent(timestamp = onset - 50 * minute, utcOffsetMinutes = 330, eventType = 19, packageName = spotify, className = keeper),
+                RawEvent(timestamp = onset - 20 * minute, utcOffsetMinutes = 330, eventType = 20, packageName = spotify, className = keeper),
+                RawEvent(timestamp = onset - 170 * minute, utcOffsetMinutes = 330, eventType = 19, packageName = spotify, className = "androidx.work.impl.foreground.SystemForegroundService"),
+                RawEvent(timestamp = onset - 5 * minute, utcOffsetMinutes = 330, eventType = 20, packageName = spotify, className = "androidx.work.impl.foreground.SystemForegroundService"),
+            ),
+        )
+        assertEquals(30 to 30, MusicHistory(db).report().byNight["2026-09-10"]?.let { it.eveningMinutes to it.lastHourMinutes })
+
+        // The laptop's player from 30 minutes before sleep until 15 after: ten of its minutes overlap the phone's.
+        val music = "music,workbook,${onset - 30 * minute},${onset + 15 * minute}"
+        var result: LaptopImport.Result? = null
+        assertEquals(0, derived.updateNights(config) { LaptopImport(db).import(file(music)).also { result = it }.changedFromTs })
+        assertEquals(1, result!!.music)
+        assertNull(result!!.changedFromTs)
+        assertEquals(before, db.sleep().nights())
+        val report = MusicHistory(db).report()
+        val night = checkNotNull(report.byNight["2026-09-10"])
+        assertEquals(50 to 50, night.eveningMinutes to night.lastHourMinutes)
+        // The seeded phone is in use for 90 s every 10 min until bed: five such sessions fall inside the 50 minutes.
+        assertEquals(42, night.screenOffMinutes)
+        // The laptop's player ran 15 minutes into sleep, five past the floor under which it is not mentioned.
+        assertEquals(5, night.afterOnsetMinutes)
+        assertEquals(NightMusic(0, 0), report.byNight["2026-09-09"])
+        assertTrue(report.anyMusic)
+        // One music night among twelve is not a comparison.
+        assertNull(report.split)
+
+        // The same file once more changes nothing; a file without the row takes the laptop's music away.
+        LaptopImport(db).import(file(music))
+        assertEquals(1, db.laptop().allMusic().size)
+        LaptopImport(db).import(file())
+        assertEquals(30 to 30, MusicHistory(db).report().byNight["2026-09-10"]?.let { it.eveningMinutes to it.lastHourMinutes })
     }
 
     @Test

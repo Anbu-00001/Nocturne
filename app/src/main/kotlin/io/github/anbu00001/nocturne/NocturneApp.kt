@@ -9,17 +9,22 @@ import io.github.anbu00001.nocturne.collector.HarvestScheduler
 import io.github.anbu00001.nocturne.collector.Harvester
 import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
 import io.github.anbu00001.nocturne.core.metrics.METRICS_VERSION
+import io.github.anbu00001.nocturne.core.mind.CheckIn
 import io.github.anbu00001.nocturne.core.sleep.SLEEP_MODEL_VERSION
 import io.github.anbu00001.nocturne.focus.FocusController
 import io.github.anbu00001.nocturne.sync.LanSync
 import io.github.anbu00001.nocturne.sync.LanSyncScheduler
 import io.github.anbu00001.nocturne.sync.PairLog
 import io.github.anbu00001.nocturne.sync.SyncStore
+import io.github.anbu00001.nocturne.data.CheckIns
 import io.github.anbu00001.nocturne.data.DerivedTables
+import io.github.anbu00001.nocturne.data.Digests
 import io.github.anbu00001.nocturne.data.NocturneDatabase
 import io.github.anbu00001.nocturne.data.Reflections
+import io.github.anbu00001.nocturne.data.SleepConfirmations
 import io.github.anbu00001.nocturne.data.SleepReportEntity
 import io.github.anbu00001.nocturne.ui.AppLabels
+import io.github.anbu00001.nocturne.widget.NocturneWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -37,6 +42,9 @@ class NocturneApp : Application(), CollectorHost {
     val deviceProfile by lazy { DeviceProfile(this) }
     val reflections by lazy { Reflections(database) }
     val focus by lazy { FocusController(this) }
+
+    /** The latest night, the week beside the four before, and the laptop's silence: the widget and Patterns read it. */
+    val digests by lazy { Digests(database) }
 
     /** Phase 5: the paired laptop and the latest Wi-Fi exchange with it. */
     val syncStore by lazy { SyncStore(this) }
@@ -76,7 +84,21 @@ class NocturneApp : Application(), CollectorHost {
         }
     }
 
-    fun harvestNow(): Job = appScope.launch { harvester.harvest() }
+    fun harvestNow(): Job = appScope.launch {
+        harvester.harvest()
+        NocturneWidget.refresh(this@NocturneApp)
+    }
+
+    override fun onHarvested() = NocturneWidget.refresh(this)
+
+    /**
+     * One tap on "About right": the estimate on screen becomes the user's entry for the night, marked as a confirmation
+     * (see [SleepConfirmations]). Nothing happens when the night was already entered or has no verdict.
+     */
+    fun confirmSleepEstimate(nightDate: String): Job = appScope.launch {
+        if (SleepConfirmations(database).confirm(nightDate, System.currentTimeMillis())) harvester.recomputeNights()
+        NocturneWidget.refresh(this@NocturneApp)
+    }
 
     /** The user's own sleep times for a night (spec §6.3): kept as entered, then every night is re-derived. */
     fun saveSleepReport(nightDate: String, onsetTs: Long, wakeTs: Long, utcOffsetMinutes: Int, sleepLatencyScore: Int? = null) {
@@ -85,6 +107,7 @@ class NocturneApp : Application(), CollectorHost {
                 SleepReportEntity(nightDate, onsetTs, wakeTs, utcOffsetMinutes, System.currentTimeMillis(), sleepLatencyScore = sleepLatencyScore),
             )
             harvester.recomputeNights()
+            NocturneWidget.refresh(this@NocturneApp)
         }
     }
 
@@ -93,6 +116,7 @@ class NocturneApp : Application(), CollectorHost {
         appScope.launch {
             database.sleep().upsertReport(SleepReportEntity(nightDate, 0, 0, utcOffsetMinutes, System.currentTimeMillis(), noSleep = true))
             harvester.recomputeNights()
+            NocturneWidget.refresh(this@NocturneApp)
         }
     }
 
@@ -100,7 +124,15 @@ class NocturneApp : Application(), CollectorHost {
         appScope.launch {
             database.sleep().deleteReport(nightDate)
             harvester.recomputeNights()
+            NocturneWidget.refresh(this@NocturneApp)
         }
+    }
+
+    /** The daily check-in: one a day, a later tap replaces it; the widget then shows it. */
+    fun saveCheckIn(checkIn: CheckIn): Job = appScope.launch {
+        val now = System.currentTimeMillis()
+        CheckIns(database).save(checkIn, now, java.time.ZoneId.systemDefault().rules.getOffset(java.time.Instant.ofEpochMilli(now)).totalSeconds / 60)
+        NocturneWidget.refresh(this@NocturneApp)
     }
 
     companion object {

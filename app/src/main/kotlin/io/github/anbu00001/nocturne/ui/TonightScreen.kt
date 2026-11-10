@@ -137,6 +137,8 @@ fun TonightScreen(app: NocturneApp) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        LaptopQuietNote(app, state.night?.dateOfNight)
+        CheckInCard(app)
         Text(windowLine(state), style = MaterialTheme.typography.titleMedium)
 
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

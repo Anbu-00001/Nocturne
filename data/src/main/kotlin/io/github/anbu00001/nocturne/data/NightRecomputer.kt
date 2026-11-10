@@ -115,7 +115,7 @@ class NightRecomputer(private val db: NocturneDatabase, private val display: Dis
         val raw = db.rawEvents()
         val reports = sleep.reports().associate { row ->
             val date = LocalDate.parse(row.dateOfNight)
-            date to if (row.noSleep) SleepReport(date, null, null) else SleepReport(date, row.onsetTs, row.wakeTs)
+            date to if (row.noSleep) SleepReport(date, null, null, row.confirmed) else SleepReport(date, row.onsetTs, row.wakeTs, row.confirmed)
         }
         val stored = sleep.nights().associateBy { LocalDate.parse(it.dateOfNight) }
 

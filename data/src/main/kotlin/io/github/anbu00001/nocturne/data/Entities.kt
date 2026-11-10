@@ -238,6 +238,11 @@ data class SleepReportEntity(
      * personal sensitivity fit (spec §6.2, Phase 3c) needs 30 nights of it.
      */
     val sleepLatencyScore: Int? = null,
+    /**
+     * Schema 9: one tap on "About right". The times are the estimate that was on screen, kept as they were then, so a later
+     * model cannot change what the user agreed to. Such a night counts as theirs everywhere except the corrective offset.
+     */
+    @ColumnInfo(defaultValue = "0") val confirmed: Boolean = false,
 )
 
 /** Charging state at each harvester run, which corroborates sleep (spec §6.3). Recorded, not derived. */
@@ -320,6 +325,17 @@ data class LaptopGapEntity(
 )
 
 /** Time zones observed on the device, so each event's offset can be resolved for its own instant. */
+/**
+ * Schema 10: a music player on a laptop was playing (the laptop file's `music` rows). Primary data, like the spans. The
+ * phone's own music is not stored: it is read from raw_events whenever it is asked for.
+ */
+@Entity(tableName = "laptop_music", primaryKeys = ["host", "startTs"], indices = [Index("endTs")])
+data class LaptopMusicEntity(
+    val host: String,
+    val startTs: Long,
+    val endTs: Long,
+)
+
 @Entity(tableName = "zone_changes")
 data class ZoneChangeEntity(
     @PrimaryKey val sinceTs: Long,

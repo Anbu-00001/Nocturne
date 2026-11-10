@@ -16,7 +16,16 @@ enum class GapLabel(val rating: Int) {
 }
 
 /** Where a reflection came from. Only prompts count against the caps; labelling from the weekly list is the user's own doing. */
-enum class ReflectionSource { PROMPT, BACKFILL }
+enum class ReflectionSource {
+    PROMPT,
+    BACKFILL,
+
+    /**
+     * The daily check-in (core.mind.CheckIn), kept in the same table so it needed no schema change: the column holds the
+     * name as text. Such a row is not about a phone-down gap and the gap rules never see it (ReflectionDao.since).
+     */
+    MOOD,
+}
 
 /** A reflections row as the prompt rules see it. */
 data class GapReflection(

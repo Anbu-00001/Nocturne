@@ -34,6 +34,10 @@ def afk_bucket(host: str) -> str:
     return f"aw-watcher-afk_{host}"
 
 
+def music_bucket(host: str) -> str:
+    return f"nocturne-music_{host}"
+
+
 def panel_size_mm(drm: Path = Path("/sys/class/drm")) -> tuple[int, int] | None:
     """The built-in panel's image size from its EDID's first detailed timing descriptor."""
     for path in sorted(drm.glob("card*-eDP-*/edid")) + sorted(drm.glob("card*-LVDS-*/edid")):
@@ -84,6 +88,32 @@ def idle_ms() -> int | None:
     return int(m.group(1)) if m else None
 
 
+MPRIS_PREFIX = "org.mpris.MediaPlayer2."
+
+
+def mpris_players(names_output: str) -> list[str]:
+    """The media players on the session bus, from gdbus's reply to ListNames."""
+    return sorted(set(re.findall(r"'(org\.mpris\.MediaPlayer2\.[A-Za-z0-9_.-]+)'", names_output)))
+
+
+def music_playing() -> bool | None:
+    """
+    Whether any media player says it is playing now: MPRIS's PlaybackStatus, which is Playing, Paused or Stopped
+    (specifications.freedesktop.org/mpris-spec). None when the session bus cannot be asked. Only the state is read:
+    no track, artist or player name is recorded, because the sleep question needs minutes and the time of night.
+    A browser tab playing a video also answers as a player; it is counted, and that is said where the figure is shown.
+    """
+    names = _gdbus("--dest", "org.freedesktop.DBus", "--object-path", "/org/freedesktop/DBus", "--method", "org.freedesktop.DBus.ListNames")
+    if names is None:
+        return None
+    for player in mpris_players(names):
+        out = _gdbus("--dest", player, "--object-path", "/org/mpris/MediaPlayer2", "--method", "org.freedesktop.DBus.Properties.Get",
+                     "org.mpris.MediaPlayer2.Player", "PlaybackStatus")
+        if out and "'Playing'" in out:
+            return True
+    return False
+
+
 @dataclass(frozen=True)
 class Beat:
     afk: bool
@@ -127,15 +157,23 @@ class AfkTracker:
         return [Beat(False, max(last_input, self.active_since), 0.0)]
 
 
-def watch(aw: ActivityWatch, host: str, display_every_s: int = 60, afk: bool = False, poll_s: int = 5, timeout_s: int = 180) -> None:
-    """Records display state every [display_every_s] and, with [afk], presence every [poll_s], until stopped."""
+def watch(aw: ActivityWatch, host: str, display_every_s: int = 60, afk: bool = False, poll_s: int = 5, timeout_s: int = 180,
+          music_every_s: int = 15) -> None:
+    """
+    Records display state every [display_every_s], with [afk] presence every [poll_s], and a heartbeat every [music_every_s]
+    while a media player is playing, until stopped. Nothing is written while nothing plays, so the music bucket holds
+    playing time only.
+    """
     tracker = AfkTracker(timeout_s)
     ready = False
     last_display = 0.0
+    last_music = 0.0
+    sleep_s = poll_s if afk else min(display_every_s, music_every_s)
     while True:
         try:
             if not ready:
                 aw.create_bucket(display_bucket(host), "nocturne.display", hostname=host)
+                aw.create_bucket(music_bucket(host), "nocturne.music", hostname=host)
                 if afk:
                     aw.create_bucket(afk_bucket(host), "afkstatus", hostname=host, client="nocturne")
                 ready = True
@@ -151,7 +189,13 @@ def watch(aw: ActivityWatch, host: str, display_every_s: int = 60, afk: bool = F
                 data = {"backlight": None if share is None else round(share, 3), "nightLight": night_light_active()}
                 aw.heartbeat(display_bucket(host), {"timestamp": iso(now_ms()), "duration": 0, "data": data}, pulsetime=display_every_s + 30)
                 last_display = time.monotonic()
+            if time.monotonic() - last_music >= music_every_s:
+                if music_playing():
+                    # Beats closer together than the pulsetime join into one event; a pause longer than that ends it.
+                    aw.heartbeat(music_bucket(host), {"timestamp": iso(now_ms()), "duration": 0, "data": {"playing": True}},
+                                 pulsetime=music_every_s + sleep_s + 10)
+                last_music = time.monotonic()
         except (OSError, urllib.error.URLError) as e:
             print(f"watch: {e}", file=sys.stderr, flush=True)
             ready = False
-        time.sleep(poll_s if afk else display_every_s)
+        time.sleep(sleep_s)

@@ -249,6 +249,152 @@ object Tone {
         val LATENCY_BANDS = listOf("15 min or less", "16 to 30 min", "31 to 60 min", "Over 60 min")
         fun noSleepDetail(night: String, source: String) = "$night: no sleep, $source"
         const val CHART_NO_SLEEP = "A ring marks a night with no sleep."
+
+        /** One tap in place of two time pickers, on Last night and on the home-screen widget. */
+        const val ABOUT_RIGHT = "About right"
+        const val NOT_RIGHT = "Not right"
+        fun confirmed(onset: String, wake: String) = "Asleep about $onset to $wake, as you confirmed"
+        const val NO_SLEEP_CONFIRMED = "No sleep this night, as you confirmed"
+        const val CONFIRM_NOTE =
+            "About right keeps this estimate as your night: it then counts for the evening window and for shifts, where a low-confidence estimate does not."
+    }
+
+    /**
+     * The last seven nights beside the four weeks before them: the home-screen widget and the top of Patterns. Figures only,
+     * each beside the person's own earlier figure and never beside a norm.
+     */
+    object Week {
+        const val SECTION = "This week"
+        const val PENDING = "The week in figures appears once four of the last seven nights have sleep times."
+        fun onset(nights: Int, onset: String) = "Sleep began around $onset over the last $nights nights with times."
+        fun onsetBeside(nights: Int, onset: String, before: String) =
+            "Sleep began around $onset over the last $nights nights with times; around $before over the four weeks before."
+        fun spread(spread: String) = "Onset varied by $spread from night to night (standard deviation)."
+        fun spreadBeside(spread: String, before: String) =
+            "Onset varied by $spread from night to night (standard deviation); by $before over the four weeks before."
+        fun length(median: String) = "Median sleep $median."
+        fun lengthBeside(median: String, before: String) = "Median sleep $median; $before over the four weeks before."
+        fun runs(short: Int, long: Int, sleepless: Int): String? {
+            val parts = listOfNotNull(
+                nights(short, "under 5 h").takeIf { short > 0 },
+                nights(long, "of 9 h or more").takeIf { long > 0 },
+                nights(sleepless, "without sleep").takeIf { sleepless > 0 },
+            )
+            return if (parts.isEmpty()) null else parts.joinToString(", ", postfix = ".").replaceFirstChar(Char::uppercase)
+        }
+        private fun nights(count: Int, what: String) = if (count == 1) "one night $what" else "$count nights $what"
+
+        fun lateApp(app: String, withNights: Int, withOnset: String, withSleep: String, withoutNights: Int, withoutOnset: String, withoutSleep: String) =
+            "On the $withNights nights with $app open for 10 minutes or more in the 3 h before sleep, sleep began around $withOnset " +
+                "and lasted about $withSleep. On the other $withoutNights, around $withoutOnset and $withoutSleep."
+        const val LATE_APP_NOTE =
+            "The two apps with the most minutes before sleep over the last five weeks, whatever they show, counted from estimates. " +
+                "A difference does not say which leads to which: a late night leaves more room for an app as surely as an app can keep someone up."
+
+        /** The widget's one line. */
+        fun short(nights: Int, onset: String, spread: String?) =
+            if (spread == null) "$nights nights: onset around $onset" else "$nights nights: onset around $onset, varying by $spread"
+        fun shortBefore(onset: String, spread: String?) =
+            if (spread == null) "Four weeks before: $onset" else "Four weeks before: $onset, varying by $spread"
+    }
+
+    /**
+     * Listening, from the phone's player and the laptop's: first as part of the day (how much, and how much of it away from
+     * a screen), then beside sleep. Figures and their limits only: nothing here says music did anything. Trials found
+     * people rate their sleep a little better with it and did not find they fall asleep sooner (Jespersen et al., Cochrane
+     * 2022), and one person's unrandomised nights can show less than a trial. No line names a hormone or a mood: neither is
+     * measured here.
+     */
+    object Music {
+        const val SECTION = "Music"
+        fun days(days: Int, of: Int, total: String, screenOff: String) =
+            "Music on $days of the last $of days: up to $total in all, $screenOff of it with no screen in use."
+        fun daysNone(of: Int) = "No music recorded in the last $of days."
+        fun daysBefore(days: Int, of: Int, total: String) = "Over the $of days before: on $days days, up to $total in all."
+        const val BEFORE_SLEEP = "Beside sleep"
+        fun evening(minutes: Int, lastHour: Int, screenOff: Int) =
+            "Music for up to $minutes min of the evening, $lastHour of them in the hour before sleep and $screenOff with no screen in use."
+        const val EVENING_NONE = "No music recorded this evening."
+        fun afterOnset(minutes: Int) = "A player was still running $minutes min into sleep."
+        fun side(nights: Int, onset: String, sleep: String, spread: String) =
+            "$nights nights with 10 minutes or more of music in the evening: sleep began around $onset, lasted about $sleep, and onset varied by $spread."
+        fun otherSide(nights: Int, onset: String, sleep: String, spread: String) =
+            "The other $nights nights: around $onset, about $sleep, varying by $spread."
+        fun screenOff(music: Int, screenOff: Int) =
+            "On the music nights, a median of $music min of music, $screenOff of them with no screen in use."
+        fun pending(with: Int, without: Int, need: Int) =
+            "Nights with and without evening music are set side by side from $need of each ($with with and $without without so far)."
+        const val NONE_RECORDED =
+            "No music has been recorded yet. On the phone it is read from Spotify's player; on the laptop, from the player while the laptop's watcher runs."
+        const val NOTE =
+            "Phone minutes are the time Spotify's player ran, ended where the screen then stayed off for 90 minutes or more; a stop can still be late. " +
+                "These are your own nights, not a trial: evenings with music differ from the others in ways nothing here measures, " +
+                "so a difference is not an effect. In trials, people with insomnia who listened to music rated their sleep a little better; " +
+                "the time they took to fall asleep did not clearly change."
+    }
+
+    /**
+     * The daily check-in and Patterns' "Rhythm" section. Rules beyond the audit's, from the evidence review of 10 Nov 2026:
+     * nothing here reads a mood or a hormone from the data, because the phone measures neither. A research line states a
+     * finding about people in a study, with its source, and is never turned into a statement about this person. Links
+     * between the check-in and behaviour say "went with", give an interval, and stay hidden until there are 28 days.
+     */
+    object Mind {
+        const val CHECK_IN_TITLE = "How was today"
+        const val CHECK_IN_HINT = "One tap: across for unpleasant to pleasant, up for low to high energy."
+        const val AXIS_PLEASANT_LOW = "Unpleasant"
+        const val AXIS_PLEASANT_HIGH = "Pleasant"
+        const val AXIS_ENERGY_LOW = "Low energy"
+        const val AXIS_ENERGY_HIGH = "High energy"
+        const val TENSION_TITLE = "Tension (optional): calm to tense"
+        fun today(pleasant: Int, energy: Int, tension: Int?) =
+            if (tension == null) "Today: pleasant $pleasant of 5, energy $energy of 5" else "Today: pleasant $pleasant of 5, energy $energy of 5, tension $tension of 5"
+        const val CHECK_IN_NOTE = "Optional, once a day; a later tap replaces it. A tap before 04:00 counts for the day that is ending."
+        const val WIDGET_ASK = "How was today"
+
+        const val SECTION = "Rhythm"
+        fun jumps(pairs: Int, median: String, big: Int) =
+            "Sleep onset moved by a median of $median from one night to the next ($pairs pairs of nights in the last five weeks); on $big of them by more than 2 h."
+        fun jetlag(duration: String) = "Sleep on free nights and on work nights sits $duration apart at its midpoint (social jetlag, 28 nights)."
+        const val JETLAG_RESEARCH =
+            "What research links this to: in one cross-sectional study of 145 adults, social jetlag of 2 h or more " +
+                "has been linked with higher cortisol than 1 h or less (Rutters et al., J Biol Rhythms 2014). " +
+                "That compares groups of people; it is not a reading of yours."
+        fun alarmsEarly(mornings: Int, nights: Int, alarms: String, span: String) =
+            "After Sunday to Wednesday nights: alarms on $mornings of $nights mornings, a median of $alarms a morning, $span from the first to the last."
+        fun alarmsOther(mornings: Int, nights: Int, alarms: String, span: String) =
+            "After the other nights: alarms on $mornings of $nights mornings, a median of $alarms a morning, $span from the first to the last."
+        fun alarmsOtherNone(nights: Int) = "After the other $nights nights: no alarms."
+        fun musicWhen(morning: String, afternoon: String, evening: String) =
+            "Music over the last five weeks: up to $morning before noon, $afternoon in the afternoon, $evening from 18:00 on."
+        const val MUSIC_RESEARCH =
+            "What research links this to: in lab studies, music people enjoy " +
+                "has been shown to release dopamine at its peak moments (Salimpoor et al., Nat Neurosci 2011; Ferreri et al., PNAS 2019), " +
+                "and across 104 trials listening to music lowered stress measures a little to moderately, " +
+                "about d = 0.35 for hormone measures, mostly cortisol (de Witte et al., Health Psychol Rev 2020). " +
+                "Those are findings about music and about groups of people, many of them patients; they say nothing about any amount of listening here."
+        fun pickups(week: String, before: String) = "The phone was unlocked a median of $week times a day over the last 7 days; $before over the four weeks before."
+        const val PICKUPS_NOTE = "A count of unlocks, and nothing more is read into it. The apps open before sleep are under This week."
+
+        const val LINKS_TITLE = "The check-in beside the data"
+        fun linksWithheld(have: Int, need: Int) =
+            "How the check-in moves with sleep and music is shown from $need days that have both a check-in and a sleep estimate ($have of $need days so far)."
+        fun checkIns(count: Int, pleasant: String, energy: String) = "$count check-ins: median pleasant $pleasant of 5, median energy $energy of 5."
+        fun linkSleepEnergy(slope: String, low: String, high: String, pairs: Int) =
+            "An hour more sleep than the night before went with an energy rating $slope points different from the day before (interval $low to $high, $pairs pairs of days)."
+        fun linkSleepPleasant(slope: String, low: String, high: String, pairs: Int) =
+            "An hour more sleep than the night before went with a pleasantness rating $slope points different (interval $low to $high, $pairs pairs of days)."
+        fun linkMusicPleasant(slope: String, low: String, high: String, pairs: Int) =
+            "An hour more music than the day before went with a pleasantness rating $slope points different (interval $low to $high, $pairs pairs of days)."
+        const val LINKS_NOTE =
+            "Day-to-day differences in your own days, three comparisons chosen before any answer existed. An interval that spans zero shows no link. " +
+                "None of it shows what leads to what, and days without a check-in are left out."
+    }
+
+    /** The home-screen widget. It is looked at, never pushed: nothing here lights the screen or makes a sound. */
+    object Widget {
+        const val EMPTY = "No night with a sleep estimate yet."
+        fun estimated(onset: String, wake: String, confidence: String) = "Asleep about $onset to $wake ($confidence confidence)"
     }
 
     object Patterns {
@@ -350,6 +496,12 @@ object Tone {
         /** Phase 6: the laptop was on and nothing recorded its use, so its share of the evening is a floor. */
         fun eveningGap(minutes: Int) =
             "The laptop was on for $minutes minutes of this evening with nothing recording it, so this figure may be low."
+
+        /** The laptop's programs are not running: said on the widget and on Tonight, because twice it went unseen for two weeks. */
+        fun quiet(since: String) = "No laptop use has arrived since $since."
+        const val QUIET_DETAIL =
+            "Evening screen time, light and sleep estimates since then leave the laptop out. Its recording programs start only when " +
+                "asked; to start them at every login, run this once on the laptop: tools/activitywatch/install-services.sh"
 
         /** Phase 5: the phone and the laptop exchange over the home Wi-Fi, started by the phone. */
         const val SYNC_TITLE = "Wi-Fi sync"

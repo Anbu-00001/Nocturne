@@ -34,3 +34,6 @@ fun kindColor(kind: SessionKind): Color = when (kind) {
     SessionKind.SHORT -> Color(0xFFC9A96E)
     SessionKind.EXTENDED -> Color(0xFFD9826B)
 }
+
+/** Something that wants reading once and is nobody's fault (the laptop has gone quiet): amber, the widget's colour for it too. */
+val Attention = Color(0xFFC9A96E)

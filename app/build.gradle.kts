@@ -25,6 +25,13 @@ android {
     buildFeatures {
         compose = true
     }
+
+    // The widget's layout is inflated in a unit test (NocturneWidgetTest), which needs the app's resources.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 kotlin {
@@ -47,4 +54,8 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.compose)
     implementation(libs.androidx.core.ktx)
     implementation(libs.vico.compose.m3)
+
+    testImplementation(libs.junit4)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
 }

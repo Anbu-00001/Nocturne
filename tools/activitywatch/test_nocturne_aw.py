@@ -50,8 +50,19 @@ class LaptopFile(unittest.TestCase):
         ]
         spans = aw.spans_from_events(afk, shown, reach_ms=90_000)
         gaps = [(ist("2026-09-14T18:30"), ist("2026-09-14T19:15"))]
-        text = aw.laptop_file(self.display, ist("2026-09-14T18:00"), ist("2026-09-15T06:00"), spans, gaps)
+        played = [
+            event(ist("2026-09-14T22:00"), ist("2026-09-14T22:20"), playing=True),
+            event(ist("2026-09-14T22:20"), ist("2026-09-14T22:45"), playing=True),
+            # Twenty seconds of a clip is not listening.
+            event(ist("2026-09-14T23:30"), ist("2026-09-14T23:30") + 20_000, playing=True),
+        ]
+        text = aw.laptop_file(self.display, ist("2026-09-14T18:00"), ist("2026-09-15T06:00"), spans, gaps, aw.music_from_events(played))
         self.assertEqual(sample, text)
+
+    def test_music_rows_start_inside_the_coverage_and_a_file_without_music_has_none(self):
+        text = aw.laptop_file(self.display, 1000, 9000, [], music=[(500, 2000), (2000, 3000), (8500, 9500), (9000, 9900)])
+        self.assertEqual(["music,workbook,2000,3000", "music,workbook,8500,9500"], [l for l in text.splitlines() if l.startswith("music,")])
+        self.assertNotIn("music,", aw.laptop_file(self.display, 1000, 9000, []))
 
     def test_gaps_are_written_inside_the_coverage_only(self):
         spans = []

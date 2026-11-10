@@ -82,6 +82,33 @@ class SleepNightsTest {
     }
 
     @Test
+    fun `a confirmed estimate is the user's night but teaches no corrective offset`() {
+        val dates = (0L until 7).map { LocalDate.parse("2026-09-05").plusDays(it) }
+        val inputs = dates.map { date ->
+            NightInput(
+                date, IST,
+                busy(ist(date.toString(), "21:00"), ist(date.toString(), "23:30")) +
+                    busy(ist(date.plusDays(1).toString(), "07:30"), ist(date.plusDays(1).toString(), "11:30")),
+            )
+        }
+        // Three typed nights, 20 min after the phone went quiet, then three taps on "About right" at the estimate itself.
+        val typed = dates.take(3).associateWith { SleepReport(it, ist(it.toString(), "23:51:30"), ist(it.plusDays(1).toString(), "07:30")) }
+        val confirmed = dates.subList(3, 6).associateWith {
+            SleepReport(it, ist(it.toString(), "23:51:30"), ist(it.plusDays(1).toString(), "07:30"), confirmed = true)
+        }
+        val nights = SleepNights.infer(emptyList(), inputs, typed + confirmed)
+
+        assertEquals(SleepSource.USER_REPORTED, nights[4].source)
+        assertEquals(1.0, nights[4].confidence)
+        assertTrue(nights[4].usable(SleepConfig()))
+        // Three zero gaps beside three of 20 min would give a median of 10 min; with the confirmations left out it stays 20.
+        assertEquals(ist("2026-09-11", "23:51:30"), nights[6].onsetTs)
+        // Confirmations alone never reach the three nights an offset needs.
+        val onlyConfirmed = SleepNights.infer(emptyList(), inputs, confirmed.mapValues { (_, r) -> r.copy(onsetTs = ist(r.date.toString(), "22:00")) })
+        assertEquals(ist("2026-09-11", "23:31:30"), onlyConfirmed[6].onsetTs)
+    }
+
+    @Test
     fun `recomputing from any night, with earlier nights as context, matches recomputing all of them`() {
         val inputs = (0 until 12).map { i ->
             val date = LocalDate.parse("2026-09-01").plusDays(i.toLong())

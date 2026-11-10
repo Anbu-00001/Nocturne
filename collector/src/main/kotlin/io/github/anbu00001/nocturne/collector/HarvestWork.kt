@@ -23,11 +23,16 @@ import java.util.concurrent.TimeUnit
 interface CollectorHost {
     val database: NocturneDatabase
     val harvester: Harvester
+
+    /** After a background harvest has written its nights: the app redraws what sits outside its own screens (the widget). */
+    fun onHarvested() {}
 }
 
 class HarvestWorker(appContext: Context, params: WorkerParameters) : CoroutineWorker(appContext, params) {
     override suspend fun doWork(): Result {
-        val result = (applicationContext as CollectorHost).harvester.harvest()
+        val host = applicationContext as CollectorHost
+        val result = host.harvester.harvest()
+        host.onHarvested()
         // Each run is also a chance to restart the light sampler if ColorOS stopped it (spec §11 pitfall 10).
         LightService.ensureRunning(applicationContext)
         return if (result.outcome == HarvestOutcome.FAILED) Result.retry() else Result.success()
