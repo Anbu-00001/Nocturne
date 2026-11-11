@@ -39,6 +39,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.work.WorkInfo
 import io.github.anbu00001.nocturne.NocturneApp
+import io.github.anbu00001.nocturne.checkin.CheckInNotification
 import io.github.anbu00001.nocturne.collector.AndroidDisplayState
 import io.github.anbu00001.nocturne.collector.HarvestScheduler
 import io.github.anbu00001.nocturne.collector.LightSamplerService
@@ -325,6 +326,12 @@ fun SettingsScreen(app: NocturneApp, usageAccess: Boolean, batteryExempt: Boolea
                 Text(Tone.Light.NOTIFICATION_NOTE, style = MaterialTheme.typography.bodySmall, color = muted)
             }
         }
+        var checkInReminder by remember { mutableStateOf(CheckInNotification.enabled(context)) }
+        Text(if (checkInReminder) Tone.Mind.NOTIFY_SETTING_ON else Tone.Mind.NOTIFY_SETTING_OFF)
+        OutlinedButton(onClick = {
+            checkInReminder = !checkInReminder
+            CheckInNotification.setEnabled(context, checkInReminder)
+        }) { Text(if (checkInReminder) Tone.Mind.NOTIFY_TURN_OFF else Tone.Mind.NOTIFY_TURN_ON) }
 
         HorizontalDivider()
         SectionTitle(Tone.Settings.SLEEP)

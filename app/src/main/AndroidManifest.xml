@@ -70,6 +70,10 @@
         <receiver
             android:name=".widget.WidgetConfirmReceiver"
             android:exported="false" />
+        <!-- A tap in the evening check-in notification; not exported, so only Nocturne's own PendingIntents reach it. -->
+        <receiver
+            android:name=".checkin.CheckInTapReceiver"
+            android:exported="false" />
 
         <!-- Phase 4: laptop use in, sessions and nights out, over adb's `content` command (Phase 5 adds `pair`, which gives the
              phone the laptop's address, certificate fingerprint and secret; that too needs adb's DUMP, so nothing on the phone

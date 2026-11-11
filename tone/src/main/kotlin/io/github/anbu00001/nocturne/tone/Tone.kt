@@ -352,6 +352,18 @@ object Tone {
         const val CHECK_IN_NOTE = "Optional, once a day; a later tap replaces it. A tap before 04:00 counts for the day that is ending."
         const val WIDGET_ASK = "How was today"
 
+        // The evening notification (asked for by the owner, 10 Nov 2026): silent, once a day from 20:00, gone once answered.
+        const val NOTIFY_CHANNEL = "Evening check-in"
+        const val NOTIFY_CHANNEL_DESCRIPTION = "Once a day around 20:00, without sound, until today has an answer."
+        const val NOTIFY_TEXT = "Expand and tap a square: across for pleasant, up for energy."
+        const val NOTIFY_TENSION = "Saved. Tension, if you like: 1 calm to 5 tense."
+        const val NOTIFY_SKIP = "Skip"
+        const val NOTIFY_AXES = "Bottom row: low energy. Left: unpleasant, right: pleasant."
+        const val NOTIFY_SETTING_ON = "Evening check-in notification: on, around 20:00, silent."
+        const val NOTIFY_SETTING_OFF = "Evening check-in notification: off."
+        const val NOTIFY_TURN_OFF = "Turn off"
+        const val NOTIFY_TURN_ON = "Turn on"
+
         const val SECTION = "Rhythm"
         fun jumps(pairs: Int, median: String, big: Int) =
             "Sleep onset moved by a median of $median from one night to the next ($pairs pairs of nights in the last five weeks); on $big of them by more than 2 h."

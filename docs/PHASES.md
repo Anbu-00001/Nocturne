@@ -314,7 +314,7 @@ Considered and left:
 
 - **A personal experiment mode** (a rule such as "no game after 23:00" for some nights against a baseline). It fits, and adherence and outcome could both be measured with nothing typed. Left for now because it needs nights the model is sure of, which is what "About right" is for, and because the game it would most obviously test is uninstalled. SleepCoacher's design (5 to 6 baseline days, then phases of 5, a plain sentence at the end) is the one to copy when it is built.
 - **Surfacing the sentinel**: it is already on Patterns and honestly withheld at 28 of 60. Lowering its bar would undo the simulation behind P >= 0.8.
-- **A reminder notification to confirm the night**: against spec §7 and against the evidence below; not done.
+- **A reminder notification to confirm the night**: against spec §7 and against the evidence below; not done. (The evening *check-in* notification was added later the same night because you asked for it; see below.)
 
 Research that shaped it (abstracts read unless marked; full list with what could not be opened in the session report):
 
@@ -401,6 +401,8 @@ Where each part of the analytics spec lands among the phases above, and where th
 5. Overnight with the screen off, the service survives until morning, or Settings shows when a start was refused. Last night's coverage line shows how many screen-on minutes were measured.
 6. Battery over 48 h: Nocturne stays within the spec's 2% target (Settings, Battery usage).
 7. With notification permission denied, the service still runs and appears under active apps.
+
+**Evening check-in notification (10 Nov, asked for by you; a departure from spec §7's "no reminders").** `checkin/CheckInNotification.kt`, rule in `core/mind/CheckInReminder.kt`. Silent: a low-importance channel ("Evening check-in") with no sound or vibration, plus `setSilent`, so it never pops up or makes a noise. It is posted on the first background harvest at or after 20:00 (harvests run every 15 minutes, so about 20:00 to 20:15), once a check-in day, and only while today has no answer; none from 23:00, and it removes itself at 04:00. It uses the harvest rather than an alarm, because ColorOS stretches alarms set hours ahead (Phase 3a finding) and an alarm-clock alarm shows the alarm icon. Expanded, it shows the same five by five field as Tonight. A tap saves through `NocturneApp.saveCheckIn`, then the notification offers tension 1 to 5 or Skip, and goes away. A tap on the collapsed notification opens Tonight. Answering on Tonight also removes it. Settings has an on/off button (on by default). Debug: `--es checkin notify|cancel|state`.
 
 ## Where the build departs from the spec, and why
 

@@ -9,6 +9,7 @@ import io.github.anbu00001.nocturne.collector.HarvestScheduler
 import io.github.anbu00001.nocturne.collector.Harvester
 import io.github.anbu00001.nocturne.core.glance.CLASSIFIER_VERSION
 import io.github.anbu00001.nocturne.core.metrics.METRICS_VERSION
+import io.github.anbu00001.nocturne.checkin.CheckInNotification
 import io.github.anbu00001.nocturne.core.mind.CheckIn
 import io.github.anbu00001.nocturne.core.sleep.SLEEP_MODEL_VERSION
 import io.github.anbu00001.nocturne.focus.FocusController
@@ -89,7 +90,10 @@ class NocturneApp : Application(), CollectorHost {
         NocturneWidget.refresh(this@NocturneApp)
     }
 
-    override fun onHarvested() = NocturneWidget.refresh(this)
+    override fun onHarvested() {
+        NocturneWidget.refresh(this)
+        appScope.launch { CheckInNotification.maybePost(this@NocturneApp) }
+    }
 
     /**
      * One tap on "About right": the estimate on screen becomes the user's entry for the night, marked as a confirmation
@@ -130,6 +134,8 @@ class NocturneApp : Application(), CollectorHost {
 
     /** The daily check-in: one a day, a later tap replaces it; the widget then shows it. */
     fun saveCheckIn(checkIn: CheckIn): Job = appScope.launch {
+        // Answered, wherever it was: the evening notification has nothing left to ask (a square in it posts the tension row after).
+        CheckInNotification.cancel(this@NocturneApp)
         val now = System.currentTimeMillis()
         CheckIns(database).save(checkIn, now, java.time.ZoneId.systemDefault().rules.getOffset(java.time.Instant.ofEpochMilli(now)).totalSeconds / 60)
         NocturneWidget.refresh(this@NocturneApp)

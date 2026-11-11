@@ -7,6 +7,8 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import io.github.anbu00001.nocturne.NocturneApp
+import io.github.anbu00001.nocturne.checkin.CheckInNotification
+import io.github.anbu00001.nocturne.data.CheckIns
 import io.github.anbu00001.nocturne.core.focus.TimerKind
 import io.github.anbu00001.nocturne.core.reflect.GapCard
 import io.github.anbu00001.nocturne.core.reflect.PhoneDownGap
@@ -43,6 +45,8 @@ import java.time.ZoneId
  *   ... --es night 2026-11-09 --ez confirm true  "About right" for that night, as the widget's tap does
  *   ... --es glance show                         every line the widget and Patterns' "This week" would show now
  *   ... --es mind show                           Patterns' Rhythm section and the check-in lines (no check-in is ever written from here)
+ *   ... --es checkin notify|cancel|state            post the evening check-in notification now (no day is marked asked), take it
+ *                                                    away, or print the switch, the day last asked and today's answer
  *   ... --es music show                          music before sleep for the last 14 nights, and Patterns' comparison
  *   ... --es export all                              Settings' "Export all data" into files/exports, then
  *       adb exec-out run-as io.github.anbu00001.nocturne cat files/exports/<name printed> > export.zip
@@ -58,6 +62,7 @@ class DebugReportReceiver : BroadcastReceiver() {
             intent.hasExtra("export") -> async(app) { export(app) }
             intent.hasExtra("mind") -> async(app) { mind(app) }
             intent.hasExtra("music") -> async(app) { music(app) }
+            intent.hasExtra("checkin") -> async(app) { checkin(app, intent) }
             intent.hasExtra("glance") -> async(app) { glance(app) }
             intent.getBooleanExtra("confirm", false) -> async(app) { confirm(app, intent) }
             else -> reply(runCatching { sleep(app, intent) })
@@ -127,6 +132,18 @@ class DebugReportReceiver : BroadcastReceiver() {
         val now = System.currentTimeMillis()
         val report = MindHistory(app.database).report(now, ZoneId.systemDefault().rules.getOffset(Instant.ofEpochMilli(now)).totalSeconds / 60)
         return "RHYTHM\n" + MindText.lines(report).joinToString("\n") { "  ${it.text}" } + "\nCHECK-IN\n" + MindText.links(report).joinToString("\n") { "  ${it.text}" }
+    }
+
+    private suspend fun checkin(app: NocturneApp, intent: Intent): String = when (intent.getStringExtra("checkin")) {
+        "notify" -> if (CheckInNotification.post(app)) "posted" else "not posted: notifications are not allowed"
+        "cancel" -> { CheckInNotification.cancel(app); "cancelled" }
+        else -> {
+            val now = System.currentTimeMillis()
+            val offset = ZoneId.systemDefault().rules.getOffset(Instant.ofEpochMilli(now)).totalSeconds / 60
+            val prefs = app.getSharedPreferences(NocturneApp.PREFS, Context.MODE_PRIVATE)
+            "enabled=${CheckInNotification.enabled(app)} lastAsked=${prefs.getString("checkInPostedDay", null)} " +
+                "today=${CheckIns(app.database).today(now, offset)?.checkIn}"
+        }
     }
 
     private suspend fun music(app: NocturneApp): String {

@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The evening check-in notification's expanded view: a hint, then rows of squares (five by five, or one row for tension).
+     Rows and squares are added in code (CheckInNotification). Text keeps the notification's own appearance, so it reads
+     in the light and dark shade alike. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextView
+        android:id="@+id/checkin_hint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@android:style/TextAppearance.Material.Notification" />
+
+    <TextView
+        android:id="@+id/checkin_top"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="4dp"
+        android:textAppearance="@android:style/TextAppearance.Material.Notification.Info" />
+
+    <LinearLayout
+        android:id="@+id/checkin_rows"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical" />
+
+    <TextView
+        android:id="@+id/checkin_bottom"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="@android:style/TextAppearance.Material.Notification.Info" />
+</LinearLayout>
