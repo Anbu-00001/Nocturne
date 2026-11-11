@@ -28,6 +28,8 @@ import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.core.mind.AlarmGroup
 import io.github.anbu00001.nocturne.core.mind.CheckIn
 import io.github.anbu00001.nocturne.core.mind.MoodLinks
+import io.github.anbu00001.nocturne.core.sleep.BedtimeAlarmSummary
+import io.github.anbu00001.nocturne.data.BedtimeAlarms
 import io.github.anbu00001.nocturne.data.CheckIns
 import io.github.anbu00001.nocturne.data.MindHistory
 import io.github.anbu00001.nocturne.tone.Tone
@@ -105,8 +107,14 @@ fun CheckInCard(app: NocturneApp) {
 @Composable
 fun RhythmSection(app: NocturneApp, key: Any?) {
     var report by remember { mutableStateOf<MindHistory.Report?>(null) }
+    var alarms by remember { mutableStateOf<BedtimeAlarmSummary?>(null) }
     LaunchedEffect(key) {
-        report = withContext(Dispatchers.IO) { MindHistory(app.database).report(System.currentTimeMillis(), currentOffsetMinutes()) }
+        val now = System.currentTimeMillis()
+        report = withContext(Dispatchers.IO) { MindHistory(app.database).report(now, currentOffsetMinutes()) }
+        alarms = withContext(Dispatchers.IO) {
+            val from = CheckIn.dayOf(now, currentOffsetMinutes()).minusDays(ALARM_SPAN_NIGHTS)
+            BedtimeAlarms(app.database).summary(app.deviceProfile.classifierConfig(false).alarmPackages.toList(), from)
+        }
     }
     val current = report ?: return
     val muted = MaterialTheme.colorScheme.onSurfaceVariant
@@ -114,6 +122,7 @@ fun RhythmSection(app: NocturneApp, key: Any?) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(Tone.Mind.SECTION, style = MaterialTheme.typography.titleMedium)
         for (line in MindText.lines(current)) Text(line.text, style = if (line.note) small else MaterialTheme.typography.bodyMedium, color = if (line.note) muted else MaterialTheme.colorScheme.onSurface)
+        for (line in MindText.alarms(alarms)) Text(line.text, style = if (line.note) small else MaterialTheme.typography.bodyMedium, color = if (line.note) muted else MaterialTheme.colorScheme.onSurface)
         Text(Tone.Mind.LINKS_TITLE, style = MaterialTheme.typography.titleSmall)
         for (line in MindText.links(current)) Text(line.text, style = if (line.note) small else MaterialTheme.typography.bodyMedium, color = if (line.note) muted else MaterialTheme.colorScheme.onSurface)
     }
@@ -148,6 +157,14 @@ object MindText {
         }
     }
 
+    /** Alarms set for the night beside the screen-inactivity onsets; nothing until one has been seen. */
+    fun alarms(summary: BedtimeAlarmSummary?): List<Line> = buildList {
+        if (summary == null || summary.withAlarm == 0) return@buildList
+        add(Line(Tone.Mind.alarmsSet(summary.withAlarm, summary.nights, summary.together)))
+        summary.medianLaterMinutes?.let { add(Line(Tone.Mind.alarmsSetLater(span(it)))) }
+        add(Line(Tone.Mind.ALARMS_SET_NOTE, note = true))
+    }
+
     fun links(report: MindHistory.Report): List<Line> = buildList {
         val entries = report.checkIns
         if (entries.isNotEmpty()) {
@@ -176,3 +193,6 @@ object MindText {
         return if (s.size % 2 == 1) s[s.size / 2] else (s[s.size / 2 - 1] + s[s.size / 2]) / 2
     }
 }
+
+/** Nights the Rhythm section's alarm line covers, the same span as its other lines. */
+private const val ALARM_SPAN_NIGHTS = 35L

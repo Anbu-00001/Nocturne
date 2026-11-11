@@ -28,6 +28,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.TimePickerLayoutType
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -48,9 +49,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.core.glance.WakeTrigger
+import io.github.anbu00001.nocturne.core.sleep.BedtimeAlarm
 import io.github.anbu00001.nocturne.core.sleep.SleepSource
 import io.github.anbu00001.nocturne.core.time.EveningWindow
 import io.github.anbu00001.nocturne.core.time.LocalClock
+import io.github.anbu00001.nocturne.data.BedtimeAlarms
 import io.github.anbu00001.nocturne.data.LaptopSpanEntity
 import io.github.anbu00001.nocturne.data.NightEntity
 import io.github.anbu00001.nocturne.data.NightTotals
@@ -70,6 +73,8 @@ import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class LastNightState(
     val nightDate: String? = null,
@@ -190,6 +195,7 @@ fun LastNightScreen(app: NocturneApp, enterTimes: Boolean = false) {
                     Text(Tone.LastNight.glances(totals.glances, totals.lockScreenGlances), style = MaterialTheme.typography.headlineSmall)
                     Text(Tone.LastNight.screenTime(Tone.duration(totals.eveningScreenMs), windowText(window)))
                     Text(Tone.LastNight.sessions(totals.sessions))
+                    BedtimeAlarmLines(app, nightDate, night?.utcOffsetMinutes ?: currentOffsetMinutes(), night?.estimatedSleepOnset?.takeIf { !night.noSleep })
                 }
                 Text(
                     state.glanceMedian?.let { Tone.LastNight.glanceMedian(formatNumber(it), state.priorNights) }
@@ -468,6 +474,26 @@ private val nightFormat = DateTimeFormatter.ofPattern("EEE d MMM")
 fun formatNight(isoDate: String): String = LocalDate.parse(isoDate).format(nightFormat)
 
 fun clockText(ts: Long, offsetMinutes: Int): String = minuteText(LocalClock.minuteOfDay(ts, offsetMinutes))
+
+/** An alarm set for the night, and where the screen-inactivity onset fell against it. Nothing when there was none. */
+@Composable
+private fun BedtimeAlarmLines(app: NocturneApp, nightDate: String, offsetMinutes: Int, onset: Long?) {
+    var alarm by remember(nightDate) { mutableStateOf<BedtimeAlarm?>(null) }
+    LaunchedEffect(nightDate, offsetMinutes) {
+        alarm = withContext(Dispatchers.IO) {
+            BedtimeAlarms(app.database).forNight(app.deviceProfile.classifierConfig(false).alarmPackages.toList(), nightDate, offsetMinutes)
+        }
+    }
+    val set = alarm ?: return
+    val muted = MaterialTheme.colorScheme.onSurfaceVariant
+    Text(Tone.LastNight.alarmSet(clockText(set.clockAt, offsetMinutes), clockText(set.firstRingAt, offsetMinutes), Tone.duration(set.leadMs)), color = muted)
+    when (set.placement(onset)) {
+        BedtimeAlarm.Placement.WITH -> Text(Tone.LastNight.ALARM_WITH, color = muted)
+        BedtimeAlarm.Placement.AFTER -> Text(Tone.LastNight.alarmAfter(Tone.duration(onset!! - set.clockAt)), color = muted)
+        BedtimeAlarm.Placement.BEFORE -> Text(Tone.LastNight.alarmBefore(Tone.duration(set.clockAt - onset!!)), color = muted)
+        null -> Unit
+    }
+}
 
 fun minuteText(minuteOfDay: Int): String = "%02d:%02d".format(minuteOfDay / 60, minuteOfDay % 60)
 

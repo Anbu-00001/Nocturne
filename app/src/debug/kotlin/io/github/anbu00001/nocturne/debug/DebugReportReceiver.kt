@@ -9,6 +9,8 @@ import android.content.Intent
 import io.github.anbu00001.nocturne.NocturneApp
 import io.github.anbu00001.nocturne.checkin.CheckInNotification
 import io.github.anbu00001.nocturne.data.CheckIns
+import io.github.anbu00001.nocturne.core.time.LocalClock
+import io.github.anbu00001.nocturne.data.BedtimeAlarms
 import io.github.anbu00001.nocturne.core.focus.TimerKind
 import io.github.anbu00001.nocturne.core.reflect.GapCard
 import io.github.anbu00001.nocturne.core.reflect.PhoneDownGap
@@ -47,6 +49,7 @@ import java.time.ZoneId
  *   ... --es mind show                           Patterns' Rhythm section and the check-in lines (no check-in is ever written from here)
  *   ... --es checkin notify|cancel|state            post the evening check-in notification now (no day is marked asked), take it
  *                                                    away, or print the switch, the day last asked and today's answer
+ *   ... --es alarm show                          alarms set for the night over the last 35 nights, and each night's line
  *   ... --es music show                          music before sleep for the last 14 nights, and Patterns' comparison
  *   ... --es export all                              Settings' "Export all data" into files/exports, then
  *       adb exec-out run-as io.github.anbu00001.nocturne cat files/exports/<name printed> > export.zip
@@ -63,6 +66,7 @@ class DebugReportReceiver : BroadcastReceiver() {
             intent.hasExtra("mind") -> async(app) { mind(app) }
             intent.hasExtra("music") -> async(app) { music(app) }
             intent.hasExtra("checkin") -> async(app) { checkin(app, intent) }
+            intent.hasExtra("alarm") -> async(app) { alarm(app) }
             intent.hasExtra("glance") -> async(app) { glance(app) }
             intent.getBooleanExtra("confirm", false) -> async(app) { confirm(app, intent) }
             else -> reply(runCatching { sleep(app, intent) })
@@ -144,6 +148,22 @@ class DebugReportReceiver : BroadcastReceiver() {
             "enabled=${CheckInNotification.enabled(app)} lastAsked=${prefs.getString("checkInPostedDay", null)} " +
                 "today=${CheckIns(app.database).today(now, offset)?.checkIn}"
         }
+    }
+
+    private suspend fun alarm(app: NocturneApp): String {
+        val clocks = app.deviceProfile.classifierConfig(false).alarmPackages.toList()
+        val alarms = BedtimeAlarms(app.database)
+        val nights = app.database.sleep().nights().takeLast(35)
+        val from = nights.firstOrNull()?.let { LocalDate.parse(it.dateOfNight) } ?: LocalDate.now()
+        val summary = alarms.summary(clocks, from)
+        val lines = nights.mapNotNull { n ->
+            val off = n.utcOffsetMinutes
+            alarms.forNight(clocks, n.dateOfNight, off)?.let { a ->
+                fun hm(ts: Long) = "%02d:%02d".format(LocalClock.minuteOfDay(ts, off) / 60, LocalClock.minuteOfDay(ts, off) % 60)
+                "  ${n.dateOfNight} clock ${hm(a.clockAt)} ring ${hm(a.firstRingAt)} onset ${n.estimatedSleepOnset?.let(::hm)} ${a.placement(n.estimatedSleepOnset)}"
+            }
+        }
+        return "clocks=$clocks\n$summary\n" + lines.joinToString("\n")
     }
 
     private suspend fun music(app: NocturneApp): String {

@@ -404,6 +404,16 @@ Where each part of the analytics spec lands among the phases above, and where th
 
 **Evening check-in notification (10 Nov, asked for by you; a departure from spec §7's "no reminders").** `checkin/CheckInNotification.kt`, rule in `core/mind/CheckInReminder.kt`. Silent: a low-importance channel ("Evening check-in") with no sound or vibration, plus `setSilent`, so it never pops up or makes a noise. It is posted on the first background harvest at or after 20:00 (harvests run every 15 minutes, so about 20:00 to 20:15), once a check-in day, and only while today has no answer; none from 23:00, and it removes itself at 04:00. It uses the harvest rather than an alarm, because ColorOS stretches alarms set hours ahead (Phase 3a finding) and an alarm-clock alarm shows the alarm icon. Expanded, it shows the same five by five field as Tonight. A tap saves through `NocturneApp.saveCheckIn`, then the notification offers tension 1 to 5 or Skip, and goes away. A tap on the collapsed notification opens Tonight. Answering on Tonight also removes it. Settings has an on/off button (on by default). Debug: `--es checkin notify|cancel|state`.
 
+**Alarm set for the night (11 Nov, your request).** `core/sleep/BedtimeAlarm.kt`, `data/BedtimeAlarms.kt`. The rule: the Clock app opened between 18:00 and 03:00, and its first alarm ringing 5 hours or more later. Last night shows the two times and where the screen-inactivity onset fell: within half an hour, later or earlier. Patterns' Rhythm section shows the count over 35 nights. **It never moves the sleep estimate.** Screen inactivity stays the only source.
+
+Why it is read afterwards from sessions:
+- ColorOS Clock's alarm list is closed to other apps (its provider needs `oppo.permission.OPPO_COMPONENT_SAFE`).
+- The system's "next alarm" (`AlarmManager.getNextAlarmClock`) always points at ZAlarm's keep-alive alarm (`com.walarm.app`, `HEARTBEAT_ALARM_CLOCK`, rescheduled about every 10 minutes), so the real one cannot be seen.
+
+Over the whole history (to 11 Nov) the rule held on 26 of 64 nights. On 16 of those the screen went quiet within a minute of the Clock use; on the others sleep came 30 minutes to 10 hours later. On the phone at 17:07: 15 of the last 34 nights, 9 within half an hour, a median of 46 minutes later on the rest. Debug: `--es alarm show`.
+
+**Installed 11 Nov 17:06** together with the evening check-in notification (schema 10, no migration; phone idle on the launcher, certificate matched, gate PROCEED at 97%). Tests: core-model, tone, data and app unit tests, plus the debug build. **Nocturne's notifications are blocked on the phone** (appop `POST_NOTIFICATION: ignore`), and adb cannot grant them. Until you allow them, the evening notification is not posted, and its day is not marked as asked.
+
 ## Where the build departs from the spec, and why
 
 Phase 1:

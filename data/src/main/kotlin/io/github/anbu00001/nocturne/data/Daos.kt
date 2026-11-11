@@ -239,6 +239,18 @@ interface ReflectionDao {
     @Query("SELECT nightDate AS nightDate, startTs AS startTs FROM sessions WHERE trigger = 'ALARM' AND nightDate >= :fromNight ORDER BY startTs")
     suspend fun alarmWakes(fromNight: String): List<AlarmWake>
 
+    /** Starts of unlocked sessions that used one of [packages] (the clock apps), outside alarm wakes, in [fromTs, toTs). */
+    @Query(
+        """SELECT DISTINCT s.startTs FROM sessions s JOIN session_apps a ON a.sessionStartTs = s.startTs
+           WHERE a.packageName IN (:packages) AND s.unlocked = 1 AND s.trigger != 'ALARM' AND s.startTs >= :fromTs AND s.startTs < :toTs
+           ORDER BY s.startTs""",
+    )
+    suspend fun clockUses(packages: List<String>, fromTs: Long, toTs: Long): List<Long>
+
+    /** Starts of sessions an alarm lit, in [fromTs, toTs). */
+    @Query("SELECT startTs FROM sessions WHERE trigger = 'ALARM' AND startTs >= :fromTs AND startTs < :toTs ORDER BY startTs")
+    suspend fun alarmRings(fromTs: Long, toTs: Long): List<Long>
+
     @Query("SELECT startTs FROM sessions WHERE unlocked AND startTs >= :fromTs ORDER BY startTs")
     suspend fun unlocksFrom(fromTs: Long): List<Long>
 }

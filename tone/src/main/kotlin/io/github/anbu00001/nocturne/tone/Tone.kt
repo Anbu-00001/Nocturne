@@ -197,6 +197,12 @@ object Tone {
         fun glances(counted: Int, withoutUnlock: Int) = "$counted glances, $withoutUnlock without unlocking"
         fun screenTime(duration: String, window: String) = "$duration with the screen on, $window"
         fun sessions(count: Int) = "$count screen sessions"
+
+        // An alarm set for the night (core.sleep.BedtimeAlarm): beside the estimate from screen inactivity, never moving it.
+        fun alarmSet(clock: String, ring: String, lead: String) = "Clock opened at $clock; its first alarm rang at $ring, $lead later."
+        const val ALARM_WITH = "The screen went quiet within half an hour of that."
+        fun alarmAfter(wait: String) = "The screen went quiet $wait after that."
+        fun alarmBefore(gap: String) = "The screen had gone quiet $gap before that."
         fun glanceMedian(median: String, nights: Int) = "Median over the previous $nights nights: $median glances"
         const val MEDIAN_PENDING = "A median appears once 7 nights are recorded."
         const val WINDOW_PROVISIONAL =
@@ -387,6 +393,11 @@ object Tone {
                 "Those are findings about music and about groups of people, many of them patients; they say nothing about any amount of listening here."
         fun pickups(week: String, before: String) = "The phone was unlocked a median of $week times a day over the last 7 days; $before over the four weeks before."
         const val PICKUPS_NOTE = "A count of unlocks, and nothing more is read into it. The apps open before sleep are under This week."
+
+        fun alarmsSet(withAlarm: Int, nights: Int, together: Int) =
+            "On $withAlarm of the last $nights nights the Clock was opened in the evening 5 hours or more before its first alarm; on $together of them the screen went quiet within half an hour."
+        fun alarmsSetLater(wait: String) = "On the others, it went quiet a median of $wait later."
+        const val ALARMS_SET_NOTE = "Setting an alarm is shown beside the estimate from screen inactivity; it does not move it."
 
         const val LINKS_TITLE = "The check-in beside the data"
         fun linksWithheld(have: Int, need: Int) =
